@@ -1,0 +1,8 @@
+{
+  "track_id": "amneziawg_bot_core_20260824",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-08-24T21:43:00Z",
+  "updated_at": "2026-08-24T21:43:00Z",
+  "description": "Build Production AmneziaWG Telegram Sales & Subscription Bot with Outbox Provisioner and Admin Verification"
+}
