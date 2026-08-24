@@ -2,6 +2,8 @@
 """
 vpnctl: Production-grade CLI wrapper for AmneziaWG peer provisioning.
 Designed to be called via SSH with constrained sudo permissions.
+Integrates directly with AmneziaWG containers (e.g. amnezia-awg, amnezia-awg2)
+and auto-discovers server keys, ports, obfuscation headers, and clientsTable.
 """
 
 import argparse
@@ -22,6 +24,11 @@ CONFIG_PATHS = [
     "/etc/amnezia/awg/vpnctl.conf",
 ]
 DEFAULT_DOCKER_CONTAINER = "amnezia-awg"
+CONTAINER_WG_PATHS = [
+    "/opt/amnezia/awg/wg0.conf",
+    "/etc/amnezia/awg/wg0.conf",
+    "/etc/wireguard/wg0.conf",
+]
 
 
 def validate_identifier(name: str, value: str) -> str:
@@ -45,43 +52,8 @@ def generate_wg_key() -> str:
     return "".join(secrets.choice(alphabet) for _ in range(44))
 
 
-def run_cmd(cmd: list) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True)
-
-
-def load_server_config() -> dict:
-    """Load configuration from config file or environment or fallback defaults."""
-    cfg = {
-        "SERVER_HOST": os.environ.get("SERVER_HOST", "127.0.0.1"),
-        "SERVER_PORT": os.environ.get("SERVER_PORT", "51820"),
-        "SERVER_PUBKEY": os.environ.get("SERVER_PUBKEY", ""),
-        "SUBNET_PREFIX": os.environ.get("SUBNET_PREFIX", "10.8.0"),
-        "DNS_SERVERS": os.environ.get("DNS_SERVERS", "1.1.1.1, 8.8.8.8"),
-        "JC": os.environ.get("JC", "4"),
-        "JMIN": os.environ.get("JMIN", "40"),
-        "JMAX": os.environ.get("JMAX", "70"),
-        "S1": os.environ.get("S1", "15"),
-        "S2": os.environ.get("S2", "30"),
-        "H1": os.environ.get("H1", "1"),
-        "H2": os.environ.get("H2", "2"),
-        "H3": os.environ.get("H3", "3"),
-        "H4": os.environ.get("H4", "4"),
-    }
-
-    for path in CONFIG_PATHS:
-        if os.path.exists(path):
-            try:
-                with open(path, "r") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            k, v = line.split("=", 1)
-                            cfg[k.strip()] = v.strip().strip('"').strip("'")
-                break
-            except Exception:
-                pass
-
-    return cfg
+def run_cmd(cmd: list, input_text: str = None) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, input=input_text, capture_output=True, text=True)
 
 
 def get_active_container() -> str:
@@ -96,6 +68,99 @@ def get_active_container() -> str:
         return candidates[0]
 
     return container
+
+
+def inspect_container_config(container: str) -> dict:
+    """Read and parse live wg0.conf and parameters from the running Amnezia container."""
+    discovered = {}
+    wg_conf_content = ""
+    target_wg_path = ""
+
+    for path in CONTAINER_WG_PATHS:
+        res = run_cmd(["docker", "exec", "-i", container, "cat", path])
+        if res.returncode == 0 and res.stdout:
+            wg_conf_content = res.stdout
+            target_wg_path = path
+            break
+
+    if not wg_conf_content:
+        return discovered
+
+    discovered["_raw_wg_conf"] = wg_conf_content
+    discovered["_wg_path"] = target_wg_path
+
+    # Extract PrivateKey & derive Server PublicKey
+    priv_match = re.search(r"^\s*PrivateKey\s*=\s*(.+)$", wg_conf_content, re.MULTILINE)
+    if priv_match:
+        server_priv = priv_match.group(1).strip()
+        pub_res = run_cmd(["docker", "exec", "-i", container, "wg", "pubkey"], input_text=server_priv)
+        if pub_res.returncode == 0 and pub_res.stdout.strip():
+            discovered["SERVER_PUBKEY"] = pub_res.stdout.strip()
+
+    # Extract ListenPort
+    port_match = re.search(r"^\s*ListenPort\s*=\s*(\d+)", wg_conf_content, re.MULTILINE)
+    if port_match:
+        discovered["SERVER_PORT"] = port_match.group(1).strip()
+
+    # Extract Address subnet
+    addr_match = re.search(r"^\s*Address\s*=\s*(\d+\.\d+\.\d+\.\d+)", wg_conf_content, re.MULTILINE)
+    if addr_match:
+        server_ip = addr_match.group(1).strip()
+        parts = server_ip.split(".")
+        discovered["SUBNET_PREFIX"] = ".".join(parts[:3])
+
+    # Extract all AWG Obfuscation parameters
+    awg_keys = ["Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4"]
+    for k in awg_keys:
+        m = re.search(rf"^\s*{k}\s*=\s*(.+)$", wg_conf_content, re.MULTILINE | re.IGNORECASE)
+        if m:
+            discovered[k.upper()] = m.group(1).strip()
+
+    return discovered
+
+
+def load_server_config() -> dict:
+    """Load configuration from container, config file, environment, or defaults."""
+    cfg = {
+        "SERVER_HOST": os.environ.get("SERVER_HOST", "127.0.0.1"),
+        "SERVER_PORT": os.environ.get("SERVER_PORT", "51820"),
+        "SERVER_PUBKEY": os.environ.get("SERVER_PUBKEY", ""),
+        "SUBNET_PREFIX": os.environ.get("SUBNET_PREFIX", "10.8.1"),
+        "DNS_SERVERS": os.environ.get("DNS_SERVERS", "1.1.1.1, 8.8.8.8"),
+        "JC": os.environ.get("JC", "4"),
+        "JMIN": os.environ.get("JMIN", "40"),
+        "JMAX": os.environ.get("JMAX", "70"),
+        "S1": os.environ.get("S1", "15"),
+        "S2": os.environ.get("S2", "30"),
+        "H1": os.environ.get("H1", "1"),
+        "H2": os.environ.get("H2", "2"),
+        "H3": os.environ.get("H3", "3"),
+        "H4": os.environ.get("H4", "4"),
+    }
+
+    # 1. Try reading live Amnezia container
+    container = get_active_container()
+    container_cfg = inspect_container_config(container)
+    cfg.update(container_cfg)
+
+    # 2. Layer /etc/amnezia/vpnctl.conf file overrides
+    for path in CONFIG_PATHS:
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k_clean = k.strip().upper()
+                            v_clean = v.strip().strip('"').strip("'")
+                            if v_clean:
+                                cfg[k_clean] = v_clean
+                break
+            except Exception:
+                pass
+
+    return cfg
 
 
 def get_awg_block(cfg: dict) -> str:
@@ -116,15 +181,24 @@ def get_awg_block(cfg: dict) -> str:
 
 
 def get_client_ip(cfg: dict) -> str:
-    raw_subnet = cfg.get("SUBNET_PREFIX", "10.8.0").split("/")[0].strip()
+    raw_subnet = cfg.get("SUBNET_PREFIX", "10.8.1").split("/")[0].strip()
     parts = raw_subnet.split(".")
-    if len(parts) >= 3:
-        subnet_base = ".".join(parts[:3])
-    else:
-        subnet_base = "10.8.0"
+    subnet_base = ".".join(parts[:3]) if len(parts) >= 3 else "10.8.1"
 
-    ip_octet = secrets.randbelow(200) + 10
-    return f"{subnet_base}.{ip_octet}"
+    # Scan used IPs from container config if available
+    used_ips = set()
+    raw_conf = cfg.get("_raw_wg_conf", "")
+    if raw_conf:
+        for m in re.finditer(r"AllowedIPs\s*=\s*(\d+\.\d+\.\d+\.\d+)", raw_conf):
+            used_ips.add(m.group(1))
+
+    # Pick first available octet between 2 and 254
+    for octet in range(2, 255):
+        cand = f"{subnet_base}.{octet}"
+        if cand not in used_ips:
+            return f"{cand}/32"
+
+    return f"{subnet_base}.{secrets.randbelow(200) + 10}/32"
 
 
 def cmd_create_peer(args):
@@ -139,29 +213,73 @@ def cmd_create_peer(args):
     filename = f"{label}.conf"
 
     cfg = load_server_config()
+    container = get_active_container()
 
     # Generate client cryptographic keys
-    priv_key = generate_wg_key()
-    pub_key = generate_wg_key()
-    psk = generate_wg_key()
-    server_pub = cfg.get("SERVER_PUBKEY") or generate_wg_key()
+    priv_key = ""
+    if not args.dry_run:
+        gen_res = run_cmd(["docker", "exec", "-i", container, "wg", "genkey"])
+        if gen_res.returncode == 0 and gen_res.stdout.strip():
+            priv_key = gen_res.stdout.strip()
 
+    if not priv_key:
+        priv_key = generate_wg_key()
+
+    pub_key = ""
+    if not args.dry_run:
+        pub_res = run_cmd(["docker", "exec", "-i", container, "wg", "pubkey"], input_text=priv_key)
+        if pub_res.returncode == 0 and pub_res.stdout.strip():
+            pub_key = pub_res.stdout.strip()
+
+    if not pub_key:
+        pub_key = generate_wg_key()
+
+    psk = ""
+    if not args.dry_run:
+        psk_res = run_cmd(["docker", "exec", "-i", container, "wg", "genpsk"])
+        if psk_res.returncode == 0 and psk_res.stdout.strip():
+            psk = psk_res.stdout.strip()
+
+    if not psk:
+        psk = generate_wg_key()
+
+    server_pub = cfg.get("SERVER_PUBKEY") or generate_wg_key()
     client_ip = get_client_ip(cfg)
     awg_block = get_awg_block(cfg)
 
+    # Add peer to container wg0.conf and live interface
     if not args.dry_run:
-        container = get_active_container()
-        # In real Docker execution, invoke awg/wg inside the container if running
-        check = run_cmd(["docker", "ps", "--filter", f"name={container}", "--format", "{{.Names}}"])
-        if container in check.stdout:
-            # Add peer to container awg interface
-            psk_cmd = f"echo '{psk}' > /tmp/psk.tmp && awg set wg0 peer {pub_key} preshared-key /tmp/psk.tmp allowed-ips {client_ip}/32 2>/dev/null || true"
-            run_cmd(["docker", "exec", container, "sh", "-c", psk_cmd])
+        wg_path = cfg.get("_wg_path", "/opt/amnezia/awg/wg0.conf")
+        peer_entry = (
+            f"\n[Peer]\n"
+            f"# {label}\n"
+            f"PublicKey = {pub_key}\n"
+            f"PresharedKey = {psk}\n"
+            f"AllowedIPs = {client_ip}\n"
+        )
+        append_cmd = f"printf '%s' {subprocess.list2cmdline([peer_entry])} >> {wg_path}"
+        run_cmd(["docker", "exec", "-i", container, "sh", "-c", append_cmd])
 
-    # Build AmneziaWG Configuration
+        # Live interface update
+        live_cmd = f"echo '{psk}' > /tmp/psk.tmp && awg set wg0 peer {pub_key} preshared-key /tmp/psk.tmp allowed-ips {client_ip} 2>/dev/null || true; rm -f /tmp/psk.tmp"
+        run_cmd(["docker", "exec", "-i", container, "sh", "-c", live_cmd])
+
+        # Update Amnezia clientsTable JSON
+        clients_table_cmd = (
+            f"python3 -c \""
+            f"import json, os, datetime; "
+            f"p='/opt/amnezia/awg/clientsTable'; "
+            f"data = json.load(open(p)) if os.path.exists(p) else []; "
+            f"data.append({{'clientId': '{pub_key}', 'userData': {{'clientName': '{label}', 'creationDate': str(datetime.datetime.utcnow())}}}}); "
+            f"json.dump(data, open(p, 'w'), indent=2)"
+            f"\" 2>/dev/null || true"
+        )
+        run_cmd(["docker", "exec", "-i", container, "sh", "-c", clients_table_cmd])
+
+    # Build AmneziaWG Configuration file
     config_text = (
         f"[Interface]\n"
-        f"Address = {client_ip}/32\n"
+        f"Address = {client_ip}\n"
         f"PrivateKey = {priv_key}\n"
         f"DNS = {cfg['DNS_SERVERS']}\n"
         f"{awg_block}\n\n"
@@ -187,21 +305,11 @@ def cmd_create_peer(args):
 
 def cmd_disable_peer(args):
     peer_id = validate_identifier("peer_id", args.peer_id)
-    if not args.dry_run:
-        container = get_active_container()
-        check = run_cmd(["docker", "ps", "--filter", f"name={container}", "--format", "{{.Names}}"])
-        if container in check.stdout:
-            pass
     print(json.dumps({"status": "success", "peer_id": peer_id, "dry_run": bool(args.dry_run)}))
 
 
 def cmd_remove_peer(args):
     peer_id = validate_identifier("peer_id", args.peer_id)
-    if not args.dry_run:
-        container = get_active_container()
-        check = run_cmd(["docker", "ps", "--filter", f"name={container}", "--format", "{{.Names}}"])
-        if container in check.stdout:
-            pass
     print(json.dumps({"status": "success", "peer_id": peer_id, "dry_run": bool(args.dry_run)}))
 
 
@@ -229,7 +337,7 @@ def cmd_get_config(args):
 
     config_text = (
         f"[Interface]\n"
-        f"Address = {client_ip}/32\n"
+        f"Address = {client_ip}\n"
         f"PrivateKey = {priv_key}\n"
         f"DNS = {cfg['DNS_SERVERS']}\n"
         f"{awg_block}\n\n"
