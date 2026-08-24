@@ -57,9 +57,9 @@
 - [x] Task: Subscriptions Management & Config Delivery (aae0d2c)
     - [x] Write unit tests for subscription listing, redelivery rate limits, and document delivery in `tests/unit/test_subscription_delivery.py`
     - [x] Implement `My Subscriptions` handler with config redelivery and private document sending
-- [ ] Task: Customer Support Ticketing Flow
-    - [ ] Write unit tests for support ticket creation and message forwarding in `tests/unit/test_support_customer.py`
-    - [ ] Implement support handlers allowing customers to submit ticket messages and attachments in `src/app/bot/handlers/support.py`
+- [x] Task: Customer Support Ticketing Flow (6556836)
+    - [x] Write unit tests for support ticket creation and message forwarding in `tests/unit/test_support_customer.py`
+    - [x] Implement support handlers allowing customers to submit ticket messages and attachments in `src/app/bot/handlers/support.py`
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: Telegram Bot - Customer Flows & Support System' (Protocol in workflow.md)
 
 ## Phase 5: Telegram Bot - Admin Dashboard, Verification & Management
