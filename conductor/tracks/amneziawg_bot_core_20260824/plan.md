@@ -78,9 +78,9 @@
 
 ## Phase 6: Containerization, Operational Tooling & Documentation
 
-- [ ] Task: Operational Utilities & Health Monitoring
-    - [ ] Write tests for health checks, audit logging, and peer reconciliation in `tests/unit/test_operations.py`
-    - [ ] Implement `/healthz` container healthcheck and non-destructive peer reconciliation script in `src/app/utils/`
+- [x] Task: Operational Utilities & Health Monitoring (c0ea47e)
+    - [x] Write tests for health checks, audit logging, and peer reconciliation in `tests/unit/test_operations.py`
+    - [x] Implement `/healthz` container healthcheck and non-destructive peer reconciliation script in `src/app/utils/`
 - [ ] Task: Docker & Deployment Scaffolding
     - [ ] Create `Dockerfile` with multi-stage build for `bot`, `worker`, and `scheduler`
     - [ ] Create `docker-compose.yml` defining `postgres`, `bot`, `worker`, and `scheduler` services
