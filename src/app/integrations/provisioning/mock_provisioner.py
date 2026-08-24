@@ -6,6 +6,7 @@ from typing import Dict, Optional
 
 from src.app.db.models.server import VPNServer
 from src.app.integrations.provisioning.base import PeerStatus, ProvisionedPeer, VPNProvisioner
+from src.app.utils.amnezia_codec import encode_vpn_url
 
 
 class MockProvisioner(VPNProvisioner):
@@ -63,6 +64,7 @@ class MockProvisioner(VPNProvisioner):
         )
         config_bytes = config_content.encode("utf-8")
         now = datetime.now(timezone.utc)
+        vpn_url = encode_vpn_url(config_content)
 
         self._peers[external_id] = {
             "external_id": external_id,
@@ -71,6 +73,7 @@ class MockProvisioner(VPNProvisioner):
             "config_bytes": config_bytes,
             "is_active": True,
             "created_at": now,
+            "vpn_url": vpn_url,
         }
 
         return ProvisionedPeer(
@@ -79,6 +82,7 @@ class MockProvisioner(VPNProvisioner):
             config_filename=filename,
             config_bytes=config_bytes,
             created_at=now,
+            vpn_url=vpn_url,
         )
 
     async def disable_peer(

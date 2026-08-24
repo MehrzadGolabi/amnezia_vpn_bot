@@ -12,6 +12,7 @@ import paramiko
 from src.app.config.settings import get_settings
 from src.app.db.models.server import VPNServer
 from src.app.integrations.provisioning.base import PeerStatus, ProvisionedPeer, VPNProvisioner
+from src.app.utils.amnezia_codec import encode_vpn_url
 from src.app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -162,6 +163,9 @@ class SSHCommandProvisioner(VPNProvisioner):
             filename = data.get("filename", f"{label}.conf")
             config_b64 = data["config_b64"]
             config_bytes = base64.b64decode(config_b64)
+            vpn_url = data.get("vpn_url")
+            if not vpn_url and config_bytes:
+                vpn_url = encode_vpn_url(config_bytes.decode("utf-8", errors="ignore"))
         except Exception as e:
             logger.error("invalid_vpnctl_output", server=server.slug, stdout=stdout, error=str(e))
             raise RetryableProvisioningError(f"Malformed response from remote vpnctl: {e}") from e
@@ -172,6 +176,7 @@ class SSHCommandProvisioner(VPNProvisioner):
             config_filename=filename,
             config_bytes=config_bytes,
             created_at=datetime.now(timezone.utc),
+            vpn_url=vpn_url,
         )
 
     async def disable_peer(

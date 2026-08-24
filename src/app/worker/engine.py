@@ -25,6 +25,7 @@ from src.app.integrations.provisioning.ssh_provisioner import (
     RetryableProvisioningError,
     SSHCommandProvisioner,
 )
+from src.app.utils.amnezia_codec import encode_vpn_url
 from src.app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -122,11 +123,12 @@ class WorkerEngine:
             # Deliver config file document to user
             expiry_str = sub.expires_at.strftime("%Y-%m-%d %H:%M UTC")
             doc = BufferedInputFile(peer.config_bytes, filename=peer.config_filename)
+            vpn_link = f"\n\n🔗 <b>One-Click Amnezia Key:</b>\n<code>{peer.vpn_url}</code>" if peer.vpn_url else ""
             caption = (
                 f"✅ <b>Your VPN is Ready!</b>\n\n"
                 f"📍 <b>Location:</b> {server.display_name}\n"
-                f"⏳ <b>Expires:</b> <code>{expiry_str}</code>\n\n"
-                f"Import the attached configuration file into the <b>AmneziaVPN</b> application."
+                f"⏳ <b>Expires:</b> <code>{expiry_str}</code>{vpn_link}\n\n"
+                f"📥 <i>Import the attached configuration file or copy the one-click key above into <b>AmneziaVPN</b>.</i>"
             )
 
             try:
@@ -176,10 +178,17 @@ class WorkerEngine:
                     config_bytes = await self.provisioner.get_peer_config(server=server, peer_external_id=sub.peer_external_id)
                     filename = f"{sub.peer_label or 'amneziawg'}.conf"
                     doc = BufferedInputFile(config_bytes, filename=filename)
+                    conf_str = config_bytes.decode("utf-8", errors="ignore")
+                    v_url = encode_vpn_url(conf_str) if conf_str else ""
+                    v_link = f"\n\n🔗 <b>One-Click Amnezia Key:</b>\n<code>{v_url}</code>" if v_url else ""
+                    caption = (
+                        f"🔄 <b>Config Redelivery</b> for {server.display_name}{v_link}\n\n"
+                        f"📥 <i>Import the attached configuration file or copy the one-click key above into <b>AmneziaVPN</b>.</i>"
+                    )
                     await self.bot.send_document(
                         chat_id=user.telegram_user_id,
                         document=doc,
-                        caption=f"🔄 <b>Config Redelivery</b> for {server.display_name}",
+                        caption=caption,
                         parse_mode="HTML",
                     )
                     await sub_repo.increment_redelivery_count(sub.id)

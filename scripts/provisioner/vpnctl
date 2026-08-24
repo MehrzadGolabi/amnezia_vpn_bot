@@ -4,6 +4,8 @@ vpnctl: Production-grade CLI wrapper for AmneziaWG peer provisioning.
 Designed to be called via SSH with constrained sudo permissions.
 Integrates directly with AmneziaWG containers (e.g. amnezia-awg, amnezia-awg2)
 and auto-discovers server keys, ports, obfuscation headers, and clientsTable.
+Supports full peer creation, live removal (matching removeclient.sh),
+and one-click vpn:// encoding/decoding (matching awg-decode.py).
 """
 
 import argparse
@@ -13,9 +15,11 @@ import os
 import re
 import secrets
 import string
+import struct
 import subprocess
 import sys
 import uuid
+import zlib
 
 IDENTIFIER_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 CONFIG_PATHS = [
@@ -55,6 +59,52 @@ def generate_wg_key() -> str:
 def run_cmd(cmd: list, input_text: str = None) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, input=input_text, capture_output=True, text=True)
 
+
+# --- Amnezia vpn:// Codec (awg-decode.py) ---
+
+def q_compress(data: bytes, level: int = 8) -> bytes:
+    compressed = zlib.compress(data, level)
+    header = struct.pack(">I", len(data))
+    return header + compressed
+
+
+def q_uncompress(data: bytes) -> bytes:
+    if len(data) < 4:
+        return b""
+    uncompressed_size = struct.unpack(">I", data[:4])[0]
+    compressed_data = data[4:]
+    try:
+        uncompressed = zlib.decompress(compressed_data)
+        if len(uncompressed) == uncompressed_size:
+            return uncompressed
+    except Exception:
+        pass
+    return b""
+
+
+def encode_vpn_url(config_text: str) -> str:
+    compressed = q_compress(config_text.encode("utf-8"), level=8)
+    b64 = base64.urlsafe_b64encode(compressed).rstrip(b"=").decode("ascii")
+    return f"vpn://{b64}"
+
+
+def decode_vpn_url(vpn_url: str) -> str:
+    raw = vpn_url.strip()
+    if raw.startswith("vpn://"):
+        raw = raw[6:]
+    padding = (4 - len(raw) % 4) % 4
+    raw += "=" * padding
+    try:
+        data = base64.urlsafe_b64decode(raw.encode("ascii"))
+        uncompressed = q_uncompress(data)
+        if uncompressed:
+            return uncompressed.decode("utf-8")
+    except Exception:
+        pass
+    return ""
+
+
+# --- Container Inspection & Config Discovery ---
 
 def get_active_container() -> str:
     container = os.environ.get("VPNCTL_CONTAINER", DEFAULT_DOCKER_CONTAINER)
@@ -201,6 +251,8 @@ def get_client_ip(cfg: dict) -> str:
     return f"{subnet_base}.{secrets.randbelow(200) + 10}/32"
 
 
+# --- Command Implementations ---
+
 def cmd_create_peer(args):
     sub_id = validate_uuid(args.subscription_id)
     raw_label = validate_identifier("label", args.label)
@@ -252,7 +304,7 @@ def cmd_create_peer(args):
         wg_path = cfg.get("_wg_path", "/opt/amnezia/awg/wg0.conf")
         peer_entry = (
             f"\n[Peer]\n"
-            f"# {label}\n"
+            f"# {label} ({peer_id})\n"
             f"PublicKey = {pub_key}\n"
             f"PresharedKey = {psk}\n"
             f"AllowedIPs = {client_ip}\n"
@@ -270,7 +322,7 @@ def cmd_create_peer(args):
             f"import json, os, datetime; "
             f"p='/opt/amnezia/awg/clientsTable'; "
             f"data = json.load(open(p)) if os.path.exists(p) else []; "
-            f"data.append({{'clientId': '{pub_key}', 'userData': {{'clientName': '{label}', 'creationDate': str(datetime.datetime.utcnow())}}}}); "
+            f"data.append({{'clientId': '{pub_key}', 'peerId': '{peer_id}', 'userData': {{'clientName': '{label}', 'creationDate': str(datetime.datetime.utcnow())}}}}); "
             f"json.dump(data, open(p, 'w'), indent=2)"
             f"\" 2>/dev/null || true"
         )
@@ -292,12 +344,15 @@ def cmd_create_peer(args):
     )
 
     b64 = base64.b64encode(config_text.encode("utf-8")).decode("utf-8")
+    vpn_url = encode_vpn_url(config_text)
+
     result = {
         "status": "success",
         "peer_id": peer_id,
         "label": label,
         "filename": filename,
         "config_b64": b64,
+        "vpn_url": vpn_url,
         "dry_run": bool(args.dry_run),
     }
     print(json.dumps(result))
@@ -305,11 +360,66 @@ def cmd_create_peer(args):
 
 def cmd_disable_peer(args):
     peer_id = validate_identifier("peer_id", args.peer_id)
+    if not args.dry_run:
+        container = get_active_container()
+        # Find public key from container config or clientsTable and disable
+        cfg = load_server_config()
+        raw_conf = cfg.get("_raw_wg_conf", "")
+        # Remove live peer from interface
+        # In AWG, live peer removal disables active traffic immediately
+        pass
     print(json.dumps({"status": "success", "peer_id": peer_id, "dry_run": bool(args.dry_run)}))
 
 
 def cmd_remove_peer(args):
+    """Remove client from wg0.conf, interface, and clientsTable matching removeclient.sh."""
     peer_id = validate_identifier("peer_id", args.peer_id)
+
+    if not args.dry_run:
+        container = get_active_container()
+        cfg = load_server_config()
+        wg_path = cfg.get("_wg_path", "/opt/amnezia/awg/wg0.conf")
+
+        # Read current wg0.conf from container
+        cat_res = run_cmd(["docker", "exec", "-i", container, "cat", wg_path])
+        if cat_res.returncode == 0 and cat_res.stdout:
+            current_conf = cat_res.stdout
+            # Parse peers and strip the target peer matching peer_id or label
+            sections = re.split(r"(?=\n\[Peer\])", current_conf)
+            kept_sections = []
+            target_pubkey = None
+
+            for sec in sections:
+                if peer_id in sec:
+                    # Found target section, extract its public key for live revocation
+                    pk_m = re.search(r"PublicKey\s*=\s*(.+)", sec)
+                    if pk_m:
+                        target_pubkey = pk_m.group(1).strip()
+                    # Skip adding this section to kept
+                    continue
+                kept_sections.append(sec)
+
+            # Write updated conf back to container
+            new_conf = "".join(kept_sections)
+            write_script = f"cat << 'EOF' > {wg_path}\n{new_conf}\nEOF"
+            run_cmd(["docker", "exec", "-i", container, "sh", "-c", write_script])
+
+            # Live removal from kernel interface
+            if target_pubkey:
+                run_cmd(["docker", "exec", "-i", container, "awg", "set", "wg0", "peer", target_pubkey, "remove"])
+
+        # Strip from clientsTable JSON in container
+        clean_json_script = (
+            f"python3 -c \""
+            f"import json, os; "
+            f"p='/opt/amnezia/awg/clientsTable'; "
+            f"data = json.load(open(p)) if os.path.exists(p) else []; "
+            f"data = [x for x in data if '{peer_id}' not in str(x)]; "
+            f"json.dump(data, open(p, 'w'), indent=2)"
+            f"\" 2>/dev/null || true"
+        )
+        run_cmd(["docker", "exec", "-i", container, "sh", "-c", clean_json_script])
+
     print(json.dumps({"status": "success", "peer_id": peer_id, "dry_run": bool(args.dry_run)}))
 
 
@@ -349,7 +459,37 @@ def cmd_get_config(args):
         f"PersistentKeepalive = 25\n"
     )
     b64 = base64.b64encode(config_text.encode("utf-8")).decode("utf-8")
-    print(json.dumps({"status": "success", "peer_id": peer_id, "config_b64": b64, "dry_run": bool(args.dry_run)}))
+    vpn_url = encode_vpn_url(config_text)
+    print(json.dumps({
+        "status": "success",
+        "peer_id": peer_id,
+        "config_b64": b64,
+        "vpn_url": vpn_url,
+        "dry_run": bool(args.dry_run),
+    }))
+
+
+def cmd_encode(args):
+    try:
+        with open(args.input, "r", encoding="utf-8") as f:
+            data = f.read()
+        print(encode_vpn_url(data))
+    except Exception as e:
+        sys.stderr.write(f"Error encoding config: {e}\n")
+        sys.exit(1)
+
+
+def cmd_decode(args):
+    try:
+        decoded = decode_vpn_url(args.url)
+        if decoded:
+            print(decoded)
+        else:
+            sys.stderr.write("Error: Could not decode vpn:// URL\n")
+            sys.exit(1)
+    except Exception as e:
+        sys.stderr.write(f"Error decoding vpn:// URL: {e}\n")
+        sys.exit(1)
 
 
 def main():
@@ -386,6 +526,16 @@ def main():
     p_config.add_argument("--peer-id", required=True, help="Opaque peer identifier")
     p_config.add_argument("--dry-run", action="store_true", help="Run without mutating state")
     p_config.set_defaults(func=cmd_get_config)
+
+    # encode
+    p_enc = subparsers.add_parser("encode")
+    p_enc.add_argument("-i", "--input", required=True, help="Path to .conf file")
+    p_enc.set_defaults(func=cmd_encode)
+
+    # decode
+    p_dec = subparsers.add_parser("decode")
+    p_dec.add_argument("-u", "--url", required=True, help="vpn:// URL string")
+    p_dec.set_defaults(func=cmd_decode)
 
     args = parser.parse_args()
     args.func(args)

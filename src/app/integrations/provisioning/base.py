@@ -13,6 +13,7 @@ class ProvisionedPeer:
     config_filename: str
     config_bytes: bytes
     created_at: datetime
+    vpn_url: Optional[str] = None
 
 
 @dataclass
