@@ -1,6 +1,6 @@
 import re
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -34,16 +34,16 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     LOG_LEVEL: str = "INFO"
 
-    TELEGRAM_BOT_TOKEN: SecretStr
-    ADMIN_TELEGRAM_IDS: List[int] = Field(default_factory=list)
-    ADMIN_CHAT_ID: int
+    TELEGRAM_BOT_TOKEN: SecretStr = SecretStr("mock_token_123456")
+    ADMIN_TELEGRAM_IDS: Union[List[int], str] = Field(default_factory=list)
+    ADMIN_CHAT_ID: int = 0
 
     DATABASE_URL: SecretStr = SecretStr("postgresql+asyncpg://vpn_bot:vpn_bot@postgres:5432/vpn_bot")
 
     PROVISIONER_MODE: ProvisionerMode = ProvisionerMode.MOCK
     PROVISIONING_JOB_POLL_SECONDS: int = 5
     EXPIRY_CHECK_INTERVAL_SECONDS: int = 300
-    REMINDER_DAYS_BEFORE_EXPIRY: List[int] = Field(default_factory=lambda: [7, 3, 1])
+    REMINDER_DAYS_BEFORE_EXPIRY: Union[List[int], str] = Field(default_factory=lambda: [7, 3, 1])
     CONFIG_REDELIVERY_LIMIT: int = 3
     PEER_REMOVAL_GRACE_DAYS: int = 30
 
@@ -58,7 +58,7 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             parts = [p.strip() for p in v.split(",") if p.strip()]
             return [int(p) for p in parts]
-        if isinstance(v, list):
+        if isinstance(v, (list, tuple)):
             return [int(x) for x in v]
         return []
 
@@ -68,7 +68,7 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             parts = [p.strip() for p in v.split(",") if p.strip()]
             return [int(p) for p in parts]
-        if isinstance(v, list):
+        if isinstance(v, (list, tuple)):
             return [int(x) for x in v]
         return [7, 3, 1]
 
@@ -86,12 +86,10 @@ class Settings(BaseSettings):
             return data
 
         vpn_servers: Dict[str, Dict[str, Any]] = {}
-        # Pattern: VPN_SERVER_<SLUG_UPPER>_<KEY>
         prefix = "VPN_SERVER_"
         for key, value in list(data.items()):
             if key.startswith(prefix):
                 rest = key[len(prefix):]
-                # Find matching fields like ENABLED, SLUG, COUNTRY_CODE, DISPLAY_NAME, HOST, PORT, USERNAME, SSH_PRIVATE_KEY_PATH, SSH_KNOWN_HOSTS_PATH, MAX_ACTIVE_SUBSCRIPTIONS
                 parts = rest.split("_")
                 for i in range(1, len(parts)):
                     candidate_slug = "_".join(parts[:i]).lower().replace("_", "-")
@@ -112,7 +110,6 @@ class Settings(BaseSettings):
                             server_dict[field_name] = value
                         break
 
-        # Check explicit server slug inside dict if specified
         final_servers: Dict[str, ServerConfig] = {}
         for temp_slug, s_data in vpn_servers.items():
             slug = s_data.get("slug", temp_slug)
@@ -136,5 +133,11 @@ class Settings(BaseSettings):
         )
 
 
+_settings_instance: Optional[Settings] = None
+
+
 def get_settings() -> Settings:
-    return Settings()
+    global _settings_instance
+    if _settings_instance is None:
+        _settings_instance = Settings()
+    return _settings_instance

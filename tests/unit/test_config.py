@@ -9,6 +9,7 @@ def test_default_settings():
         ADMIN_TELEGRAM_IDS=[123456789, 987654321],
         ADMIN_CHAT_ID=-1001234567890,
         DATABASE_URL="postgresql+asyncpg://vpn_bot:vpn_bot@postgres:5432/vpn_bot",
+        LOG_LEVEL="INFO",
     )
     assert settings.APP_ENV == "development"
     assert settings.LOG_LEVEL == "INFO"
@@ -22,7 +23,7 @@ def test_default_settings():
 def test_admin_ids_parsing_from_string():
     settings = Settings(
         TELEGRAM_BOT_TOKEN="dummy_token",
-        ADMIN_TELEGRAM_IDS="111, 222 , 333",  # type: ignore[arg-type]
+        ADMIN_TELEGRAM_IDS="111, 222 , 333",
         ADMIN_CHAT_ID=-1001234567890,
         DATABASE_URL="postgresql+asyncpg://vpn_bot:vpn_bot@postgres:5432/vpn_bot",
     )
@@ -35,7 +36,7 @@ def test_reminder_days_parsing_from_string():
         ADMIN_TELEGRAM_IDS=[111],
         ADMIN_CHAT_ID=-100,
         DATABASE_URL="postgresql+asyncpg://vpn_bot:vpn_bot@postgres:5432/vpn_bot",
-        REMINDER_DAYS_BEFORE_EXPIRY="14, 7, 3, 1",  # type: ignore[arg-type]
+        REMINDER_DAYS_BEFORE_EXPIRY="14, 7, 3, 1",
     )
     assert settings.REMINDER_DAYS_BEFORE_EXPIRY == [14, 7, 3, 1]
 
