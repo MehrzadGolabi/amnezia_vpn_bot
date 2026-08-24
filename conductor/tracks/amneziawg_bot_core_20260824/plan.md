@@ -60,7 +60,7 @@
 - [x] Task: Customer Support Ticketing Flow (6556836)
     - [x] Write unit tests for support ticket creation and message forwarding in `tests/unit/test_support_customer.py`
     - [x] Implement support handlers allowing customers to submit ticket messages and attachments in `src/app/bot/handlers/support.py`
-- [ ] Task: Conductor - User Manual Verification 'Phase 4: Telegram Bot - Customer Flows & Support System' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 4: Telegram Bot - Customer Flows & Support System' (Protocol in workflow.md)
 
 ## Phase 5: Telegram Bot - Admin Dashboard, Verification & Management
 
