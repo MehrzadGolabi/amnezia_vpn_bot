@@ -4,13 +4,13 @@ services:
     container_name: awg_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-vpn_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpn_secret_password}
+      POSTGRES_USER: ${POSTGRES_USER:-vpn_bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpn_bot_secret}
       POSTGRES_DB: ${POSTGRES_DB:-vpn_bot}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vpn_user} -d ${POSTGRES_DB:-vpn_bot}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vpn_bot} -d ${POSTGRES_DB:-vpn_bot}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -57,8 +57,10 @@ services:
     command: ["python", "-m", "src.app.worker.main"]
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ${SSH_KEY_PATH:-~/.ssh/id_rsa}:/app/id_rsa:ro
+      - ./secrets:/app/secrets:ro
     depends_on:
       postgres:
         condition: service_healthy
