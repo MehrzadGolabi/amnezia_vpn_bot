@@ -30,7 +30,7 @@
     - [x] Write unit and validation tests for `vpnctl` CLI parsing and argument safety in `tests/unit/test_vpnctl.py`
     - [x] Create `scripts/provisioner/vpnctl` supporting `create-peer`, `disable-peer`, `remove-peer`, `peer-status`, and `--dry-run`
     - [x] Create `scripts/provisioner/install-provisioner.sh` and scoped `sudoers` configuration example
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Provisioning Abstraction & Server-Side Tools' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Provisioning Abstraction & Server-Side Tools' (Protocol in workflow.md)
 
 ## Phase 3: Asynchronous Outbox Worker & Scheduler Engine
 
