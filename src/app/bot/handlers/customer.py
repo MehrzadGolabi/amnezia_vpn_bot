@@ -17,7 +17,10 @@ from src.app.bot.keyboards.customer_keyboards import (
 from src.app.bot.locales.strings import get_text
 from src.app.bot.states.order_states import OrderFlowStates
 from src.app.config.settings import get_settings
+from src.app.db.models.job import JobType
+from src.app.db.models.subscription import SubscriptionStatus
 from src.app.db.models.user import User
+from src.app.db.repositories.job_repo import JobRepository
 from src.app.db.repositories.order_repo import OrderRepository
 from src.app.db.repositories.product_repo import ProductRepository
 from src.app.db.repositories.server_repo import ServerRepository
@@ -236,3 +239,157 @@ async def handle_receipt_upload(message: Message, data: Dict[str, Any], state: F
     text = get_text("receipt_received", lang, order_code=order.public_order_code)
     kb = get_main_menu_keyboard(lang)
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@customer_router.message(Command("my_vpn"))
+async def cmd_my_vpn(message: Message, data: Dict[str, Any]):
+    user: User = data.get("db_user")
+    session: AsyncSession = data.get("session")
+    lang = user.language_code if user else "en"
+
+    sub_repo = SubscriptionRepository(session)
+    subs = await sub_repo.get_all_by_user_id(user.id)
+
+    if not subs:
+        text = get_text("no_subscriptions", lang)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(text=get_text("btn_buy_vpn", lang), callback_data="menu_buy"),
+            ]]
+        )
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
+        return
+
+    text = "📋 <b>Your Subscriptions:</b>"
+    kb = get_subscriptions_keyboard(subs, lang)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@customer_router.callback_query(F.data == "menu_subs")
+async def callback_menu_subs(query: CallbackQuery, data: Dict[str, Any]):
+    user: User = data.get("db_user")
+    session: AsyncSession = data.get("session")
+    lang = user.language_code if user else "en"
+
+    sub_repo = SubscriptionRepository(session)
+    subs = await sub_repo.get_all_by_user_id(user.id)
+
+    if not subs:
+        text = get_text("no_subscriptions", lang)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(text=get_text("btn_buy_vpn", lang), callback_data="menu_buy"),
+                InlineKeyboardButton(text=get_text("btn_back", lang), callback_data="main_menu"),
+            ]]
+        )
+        if query.message:
+            await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await query.answer()
+        return
+
+    text = "📋 <b>Your Subscriptions:</b>"
+    kb = get_subscriptions_keyboard(subs, lang)
+    if query.message:
+        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await query.answer()
+
+
+@customer_router.callback_query(F.data.startswith("sub_view_"))
+async def callback_view_subscription(query: CallbackQuery, data: Dict[str, Any]):
+    user: User = data.get("db_user")
+    session: AsyncSession = data.get("session")
+    lang = user.language_code if user else "en"
+
+    sub_id = uuid.UUID(query.data.split("sub_view_")[1])
+    sub_repo = SubscriptionRepository(session)
+    server_repo = ServerRepository(session)
+
+    sub = await sub_repo.get_by_id(sub_id)
+    if not sub or sub.user_id != user.id:
+        await query.answer("Subscription not found", show_alert=True)
+        return
+
+    server = await server_repo.get_by_id(sub.vpn_server_id)
+    server_name = server.display_name if server else "VPN Server"
+    expiry_str = sub.expires_at.strftime("%Y-%m-%d %H:%M UTC")
+
+    text = get_text(
+        "subscription_detail",
+        lang,
+        server_name=server_name,
+        status=sub.status.value.upper(),
+        expires_at=expiry_str,
+        label=sub.peer_label or "N/A",
+    )
+    is_active = (sub.status == SubscriptionStatus.ACTIVE)
+    kb = get_subscription_detail_keyboard(str(sub.id), is_active=is_active, lang=lang)
+
+    if query.message:
+        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await query.answer()
+
+
+@customer_router.callback_query(F.data.startswith("sub_dl_"))
+@customer_router.callback_query(F.data.startswith("sub_redeliver_"))
+async def callback_redeliver_subscription(query: CallbackQuery, data: Dict[str, Any]):
+    user: User = data.get("db_user")
+    session: AsyncSession = data.get("session")
+    settings = get_settings()
+
+    raw_id = query.data.split("_")[-1]
+    sub_id = uuid.UUID(raw_id)
+    sub_repo = SubscriptionRepository(session)
+    job_repo = JobRepository(session)
+
+    sub = await sub_repo.get_by_id(sub_id)
+    if not sub or sub.user_id != user.id:
+        await query.answer("Subscription not found", show_alert=True)
+        return
+
+    if sub.config_redelivery_count >= settings.CONFIG_REDELIVERY_LIMIT:
+        await query.answer(
+            f"Redelivery limit reached ({settings.CONFIG_REDELIVERY_LIMIT} times). Please contact support.",
+            show_alert=True,
+        )
+        return
+
+    # Enqueue redeliver job in outbox
+    await job_repo.enqueue_job(
+        job_type=JobType.REDELIVER_CONFIG,
+        aggregate_type="subscription",
+        aggregate_id=sub.id,
+        payload={"redelivery": True},
+    )
+    await session.commit()
+    await query.answer("Configuration document has been queued for redelivery!", show_alert=True)
+
+
+@customer_router.callback_query(F.data.startswith("renew_"))
+async def callback_renew_subscription(query: CallbackQuery, data: Dict[str, Any]):
+    user: User = data.get("db_user")
+    session: AsyncSession = data.get("session")
+    lang = user.language_code if user else "en"
+
+    raw_id = query.data.split("renew_")[1]
+    sub_id = uuid.UUID(raw_id)
+    sub_repo = SubscriptionRepository(session)
+    server_repo = ServerRepository(session)
+    product_repo = ProductRepository(session)
+
+    sub = await sub_repo.get_by_id(sub_id)
+    if not sub or sub.user_id != user.id:
+        await query.answer("Subscription not found", show_alert=True)
+        return
+
+    server = await server_repo.get_by_id(sub.vpn_server_id)
+    if not server:
+        await query.answer("Server not available", show_alert=True)
+        return
+
+    products = await product_repo.list_enabled()
+    text = get_text("select_plan", lang, server_name=server.display_name)
+    kb = get_products_keyboard(server.slug, products, lang)
+
+    if query.message:
+        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await query.answer()
