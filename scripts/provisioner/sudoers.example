@@ -1,0 +1,8 @@
+# Sudoers configuration for AmneziaWG VPN Provisioner
+# Place this file in /etc/sudoers.d/vpn-provisioner with chmod 440
+
+vpn-provisioner ALL=(root) NOPASSWD: /usr/local/sbin/vpnctl create-peer --subscription-id * --label *
+vpn-provisioner ALL=(root) NOPASSWD: /usr/local/sbin/vpnctl disable-peer --peer-id *
+vpn-provisioner ALL=(root) NOPASSWD: /usr/local/sbin/vpnctl remove-peer --peer-id *
+vpn-provisioner ALL=(root) NOPASSWD: /usr/local/sbin/vpnctl peer-status --peer-id *
+vpn-provisioner ALL=(root) NOPASSWD: /usr/local/sbin/vpnctl get-config --peer-id *
