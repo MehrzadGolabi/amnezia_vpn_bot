@@ -94,8 +94,14 @@ def cmd_create_peer(args):
     # Check docker status
     check = run_cmd(["docker", "ps", "--filter", f"name={container}", "--format", "{{.Names}}"])
     if container not in check.stdout:
-        sys.stderr.write(f"Error: Container {container} is not running\n")
-        sys.exit(1)
+        # Fallback: auto-detect any running amnezia-awg* container (e.g. amnezia-awg2)
+        fallback = run_cmd(["docker", "ps", "--filter", "name=amnezia-awg", "--format", "{{.Names}}"])
+        candidates = [c.strip() for c in fallback.stdout.splitlines() if "amnezia-awg" in c]
+        if candidates:
+            container = candidates[0]
+        else:
+            sys.stderr.write(f"Error: No running AmneziaWG container found (checked {container} and amnezia-awg*)\n")
+            sys.exit(1)
 
     # In production, invokes internal keygen and wg set
     # Output JSON matching the contract
