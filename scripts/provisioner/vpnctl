@@ -17,8 +17,10 @@ import secrets
 import struct
 import subprocess
 import sys
+import tempfile
 import uuid
 import zlib
+from datetime import datetime, timezone
 
 IDENTIFIER_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 CONFIG_PATHS = [
@@ -184,7 +186,12 @@ def inspect_container_config(container: str) -> dict:
         discovered["SUBNET_PREFIX"] = ".".join(parts[:3])
 
     # Extract all AWG Obfuscation parameters
-    awg_keys = ["Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4"]
+    awg_keys = [
+        "Jc", "Jmin", "Jmax",
+        "S1", "S2", "S3", "S4",
+        "H1", "H2", "H3", "H4",
+        "I1", "I2", "I3", "I4", "I5",
+    ]
     for k in awg_keys:
         m = re.search(rf"^\s*{k}\s*=\s*(.+)$", wg_conf_content, re.MULTILINE | re.IGNORECASE)
         if m:
@@ -200,16 +207,18 @@ def load_server_config() -> dict:
         "SERVER_PORT": os.environ.get("SERVER_PORT", "51820"),
         "SERVER_PUBKEY": os.environ.get("SERVER_PUBKEY", ""),
         "SUBNET_PREFIX": os.environ.get("SUBNET_PREFIX", "10.8.1"),
-        "DNS_SERVERS": os.environ.get("DNS_SERVERS", "1.1.1.1, 8.8.8.8"),
-        "JC": os.environ.get("JC", "4"),
-        "JMIN": os.environ.get("JMIN", "40"),
-        "JMAX": os.environ.get("JMAX", "70"),
-        "S1": os.environ.get("S1", "15"),
-        "S2": os.environ.get("S2", "30"),
-        "H1": os.environ.get("H1", "1"),
-        "H2": os.environ.get("H2", "2"),
-        "H3": os.environ.get("H3", "3"),
-        "H4": os.environ.get("H4", "4"),
+        "DNS_SERVERS": os.environ.get("DNS_SERVERS", "1.1.1.1, 1.0.0.1"),
+        "JC": os.environ.get("JC", "6"),
+        "JMIN": os.environ.get("JMIN", "10"),
+        "JMAX": os.environ.get("JMAX", "50"),
+        "S1": os.environ.get("S1", "142"),
+        "S2": os.environ.get("S2", "17"),
+        "S3": os.environ.get("S3", "34"),
+        "S4": os.environ.get("S4", "13"),
+        "H1": os.environ.get("H1", "1196015809-1347332553"),
+        "H2": os.environ.get("H2", "2001085790-2132310278"),
+        "H3": os.environ.get("H3", "2138797701-2138904917"),
+        "H4": os.environ.get("H4", "2139548831-2142765526"),
     }
 
     # 1. Try reading live Amnezia container
@@ -242,7 +251,7 @@ def get_awg_block(cfg: dict) -> str:
         "Jc", "Jmin", "Jmax",
         "S1", "S2", "S3", "S4",
         "H1", "H2", "H3", "H4",
-        "I1", "I2", "I3", "I4",
+        "I1", "I2", "I3", "I4", "I5",
     ]
     awg_lines = []
     cfg_lookup = {k.upper(): v for k, v in cfg.items()}
@@ -321,6 +330,11 @@ def cmd_create_peer(args):
     # Add peer to container wg0.conf and live interface
     if not args.dry_run:
         wg_path = cfg.get("_wg_path", "/opt/amnezia/awg/wg0.conf")
+        
+        # 1. Fetch current server.conf
+        res = run_cmd(["docker", "exec", "-i", container, "cat", wg_path])
+        current_conf = res.stdout if res.returncode == 0 else ""
+
         peer_entry = (
             f"\n[Peer]\n"
             f"# {label}\n"
@@ -328,37 +342,65 @@ def cmd_create_peer(args):
             f"PresharedKey = {psk}\n"
             f"AllowedIPs = {client_ip}\n"
         )
-        append_cmd = f"printf '%s' {subprocess.list2cmdline([peer_entry])} >> {wg_path}"
-        run_cmd(["docker", "exec", "-i", container, "sh", "-c", append_cmd])
 
-        # Live interface update
-        live_cmd = f"echo '{psk}' > /tmp/psk.tmp && awg set wg0 peer {pub_key} preshared-key /tmp/psk.tmp allowed-ips {client_ip} 2>/dev/null || true; rm -f /tmp/psk.tmp"
-        run_cmd(["docker", "exec", "-i", container, "sh", "-c", live_cmd])
+        with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".conf") as tf:
+            tf.write(current_conf.rstrip() + "\n" + peer_entry + "\n")
+            temp_conf_path = tf.name
 
-        # Update Amnezia clientsTable JSON (format required by Amnezia app: clientId = pub_key)
-        clients_table_cmd = (
-            f"python3 -c \""
-            f"import json, os, datetime; "
-            f"p='/opt/amnezia/awg/clientsTable'; "
-            f"data = json.load(open(p)) if os.path.exists(p) else []; "
-            f"data.append({{'clientId': '{pub_key}', 'userData': {{'clientName': '{label}', 'creationDate': str(datetime.datetime.utcnow())}}}}); "
-            f"json.dump(data, open(p, 'w'), indent=2)"
-            f"\" 2>/dev/null || true"
+        run_cmd(["docker", "cp", temp_conf_path, f"{container}:{wg_path}"])
+        try:
+            os.remove(temp_conf_path)
+        except Exception:
+            pass
+
+        # 2. Reload WireGuard interface in container
+        reload_cmd = (
+            f"wg syncconf wg0 <(wg-quick strip {wg_path}) 2>/dev/null || "
+            f"(wg-quick down {wg_path} && wg-quick up {wg_path}) 2>/dev/null || "
+            f"(awg-quick down {wg_path} && awg-quick up {wg_path}) 2>/dev/null || true"
         )
-        run_cmd(["docker", "exec", "-i", container, "sh", "-c", clients_table_cmd])
+        run_cmd(["docker", "exec", "-i", container, "sh", "-c", reload_cmd])
 
-    # Build AmneziaWG Configuration file
+        # 3. Update Amnezia clientsTable JSON (format: clientId = pub_key)
+        ct_res = run_cmd(["docker", "exec", "-i", container, "cat", "/opt/amnezia/awg/clientsTable"])
+        clients_data = []
+        if ct_res.returncode == 0 and ct_res.stdout.strip():
+            try:
+                clients_data = json.loads(ct_res.stdout)
+            except Exception:
+                clients_data = []
+
+        creation_date = datetime.now(timezone.utc).strftime("%a %b %d %H:%M:%S %Y")
+        clients_data.append({
+            "clientId": pub_key,
+            "userData": {
+                "clientName": label,
+                "creationDate": creation_date
+            }
+        })
+
+        with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as ctf:
+            json.dump(clients_data, ctf, indent=2)
+            temp_ct_path = ctf.name
+
+        run_cmd(["docker", "cp", temp_ct_path, f"{container}:/opt/amnezia/awg/clientsTable"])
+        try:
+            os.remove(temp_ct_path)
+        except Exception:
+            pass
+
+    # Build AmneziaWG Configuration file matching official format
     config_text = (
         f"[Interface]\n"
         f"Address = {client_ip}\n"
-        f"PrivateKey = {priv_key}\n"
         f"DNS = {cfg['DNS_SERVERS']}\n"
+        f"PrivateKey = {priv_key}\n"
         f"{awg_block}\n\n"
         f"[Peer]\n"
         f"PublicKey = {server_pub}\n"
         f"PresharedKey = {psk}\n"
-        f"Endpoint = {cfg['SERVER_HOST']}:{cfg['SERVER_PORT']}\n"
         f"AllowedIPs = 0.0.0.0/0, ::/0\n"
+        f"Endpoint = {cfg['SERVER_HOST']}:{cfg['SERVER_PORT']}\n"
         f"PersistentKeepalive = 25\n"
     )
 
@@ -393,14 +435,14 @@ def cmd_remove_peer(args):
 
         # Read current wg0.conf from container
         cat_res = run_cmd(["docker", "exec", "-i", container, "cat", wg_path])
+        target_pubkey = None
         if cat_res.returncode == 0 and cat_res.stdout:
             current_conf = cat_res.stdout
             sections = re.split(r"(?=\n\[Peer\])", current_conf)
             kept_sections = []
-            target_pubkey = None
 
             for sec in sections:
-                if peer_id in sec:
+                if peer_id in sec or f"# {peer_id}" in sec:
                     pk_m = re.search(r"PublicKey\s*=\s*([a-zA-Z0-9+/=]+)", sec)
                     if pk_m:
                         target_pubkey = pk_m.group(1).strip()
@@ -408,23 +450,40 @@ def cmd_remove_peer(args):
                 kept_sections.append(sec)
 
             new_conf = "".join(kept_sections)
-            write_script = f"cat << 'EOF' > {wg_path}\n{new_conf}\nEOF"
-            run_cmd(["docker", "exec", "-i", container, "sh", "-c", write_script])
+            with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".conf") as tf:
+                tf.write(new_conf)
+                temp_conf_path = tf.name
 
-            if target_pubkey:
-                run_cmd(["docker", "exec", "-i", container, "awg", "set", "wg0", "peer", target_pubkey, "remove"])
+            run_cmd(["docker", "cp", temp_conf_path, f"{container}:{wg_path}"])
+            try:
+                os.remove(temp_conf_path)
+            except Exception:
+                pass
+
+            # Live interface sync
+            reload_cmd = (
+                f"wg syncconf wg0 <(wg-quick strip {wg_path}) 2>/dev/null || "
+                f"(wg-quick down {wg_path} && wg-quick up {wg_path}) 2>/dev/null || true"
+            )
+            run_cmd(["docker", "exec", "-i", container, "sh", "-c", reload_cmd])
 
         # Strip from clientsTable JSON in container
-        clean_json_script = (
-            f"python3 -c \""
-            f"import json, os; "
-            f"p='/opt/amnezia/awg/clientsTable'; "
-            f"data = json.load(open(p)) if os.path.exists(p) else []; "
-            f"data = [x for x in data if '{peer_id}' not in str(x)]; "
-            f"json.dump(data, open(p, 'w'), indent=2)"
-            f"\" 2>/dev/null || true"
-        )
-        run_cmd(["docker", "exec", "-i", container, "sh", "-c", clean_json_script])
+        ct_res = run_cmd(["docker", "exec", "-i", container, "cat", "/opt/amnezia/awg/clientsTable"])
+        if ct_res.returncode == 0 and ct_res.stdout.strip():
+            try:
+                clients_data = json.loads(ct_res.stdout)
+                clients_data = [x for x in clients_data if x.get("clientId") != target_pubkey and peer_id not in str(x)]
+                with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as ctf:
+                    json.dump(clients_data, ctf, indent=2)
+                    temp_ct_path = ctf.name
+
+                run_cmd(["docker", "cp", temp_ct_path, f"{container}:/opt/amnezia/awg/clientsTable"])
+                try:
+                    os.remove(temp_ct_path)
+                except Exception:
+                    pass
+            except Exception:
+                pass
 
     print(json.dumps({"status": "success", "peer_id": peer_id, "dry_run": bool(args.dry_run)}))
 
@@ -454,14 +513,14 @@ def cmd_get_config(args):
     config_text = (
         f"[Interface]\n"
         f"Address = {client_ip}\n"
-        f"PrivateKey = {priv_key}\n"
         f"DNS = {cfg['DNS_SERVERS']}\n"
+        f"PrivateKey = {priv_key}\n"
         f"{awg_block}\n\n"
         f"[Peer]\n"
         f"PublicKey = {server_pub}\n"
         f"PresharedKey = {psk}\n"
-        f"Endpoint = {cfg['SERVER_HOST']}:{cfg['SERVER_PORT']}\n"
         f"AllowedIPs = 0.0.0.0/0, ::/0\n"
+        f"Endpoint = {cfg['SERVER_HOST']}:{cfg['SERVER_PORT']}\n"
         f"PersistentKeepalive = 25\n"
     )
     b64 = base64.b64encode(config_text.encode("utf-8")).decode("utf-8")
