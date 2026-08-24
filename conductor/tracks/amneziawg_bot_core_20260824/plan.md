@@ -74,7 +74,7 @@
 - [x] Task: Admin Server, Product, and User Management (ac38808)
     - [x] Write unit tests for server toggling, product management, user lookup, and blocking in `tests/unit/test_admin_management.py`
     - [x] Implement admin management commands (`/servers`, `/products`, `/user <id>`, `/block <id>`, `/unblock <id>`)
-- [ ] Task: Conductor - User Manual Verification 'Phase 5: Telegram Bot - Admin Dashboard, Verification & Management' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 5: Telegram Bot - Admin Dashboard, Verification & Management' (Protocol in workflow.md)
 
 ## Phase 6: Containerization, Operational Tooling & Documentation
 
