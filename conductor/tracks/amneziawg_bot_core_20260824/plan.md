@@ -16,7 +16,7 @@
 - [x] Task: Data Repositories & Base Services (1f581a1)
     - [x] Write unit tests for repository operations in `tests/unit/test_repositories.py`
     - [x] Implement repository classes in `src/app/db/repositories/` (`UserRepository`, `OrderRepository`, `SubscriptionRepository`, `JobRepository`, `TicketRepository`, `AuditRepository`)
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Project Scaffolding, Configuration & Data Layer' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Project Scaffolding, Configuration & Data Layer' (Protocol in workflow.md)
 
 ## Phase 2: Provisioning Abstraction & Server-Side Tools
 

@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+.venv/
+.vscode/
+.idea/
+.pytest_cache/
+.coverage
+htmlcov/
+*.pyc
+__pycache__/
+*.db
+*.sqlite
+awg-docker-bot/
