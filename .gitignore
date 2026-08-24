@@ -12,3 +12,10 @@ __pycache__/
 *.db
 *.sqlite
 awg-docker-bot/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
