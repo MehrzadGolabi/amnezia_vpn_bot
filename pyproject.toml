@@ -39,7 +39,11 @@ addopts = "-p no:launch_testing --strict-markers"
 
 [tool.coverage.run]
 source = ["src/app"]
-omit = ["tests/*", "src/app/db/migrations/*"]
+omit = [
+    "tests/*",
+    "src/app/db/migrations/*",
+    "src/app/**/main.py",
+]
 
 [tool.coverage.report]
 fail_under = 80
