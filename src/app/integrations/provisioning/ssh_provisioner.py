@@ -70,8 +70,24 @@ class SSHCommandProvisioner(VPNProvisioner):
 
         escaped_cmd = " ".join(shlex.quote(arg) for arg in command_args)
 
+        resolved_key_path = key_path
         if key_path and not os.path.exists(key_path):
-            raise PermanentProvisioningError(f"SSH private key file not found on filesystem at: {key_path}")
+            basename = os.path.basename(key_path)
+            candidates = [
+                os.path.join("/app/secrets", basename),
+                os.path.join("/app", key_path.lstrip("/")),
+                os.path.join("secrets", basename),
+            ]
+            found = False
+            for cand in candidates:
+                if os.path.exists(cand):
+                    resolved_key_path = cand
+                    found = True
+                    break
+            if not found:
+                raise PermanentProvisioningError(
+                    f"SSH private key file not found on filesystem at: {key_path} (checked container paths: {candidates})"
+                )
 
         def _sync_ssh_run() -> Tuple[int, str, str]:
             client = paramiko.SSHClient()
@@ -86,12 +102,12 @@ class SSHCommandProvisioner(VPNProvisioner):
                     hostname=host,
                     port=port,
                     username=username,
-                    key_filename=key_path,
+                    key_filename=resolved_key_path,
                     timeout=self.connect_timeout,
                     banner_timeout=self.connect_timeout,
                     auth_timeout=self.connect_timeout,
                     allow_agent=False,
-                    look_for_keys=False if key_path else True,
+                    look_for_keys=False if resolved_key_path else True,
                 )
                 stdin, stdout, stderr = client.exec_command(
                     escaped_cmd,
