@@ -2,10 +2,10 @@
 
 ## Phase 1: Project Scaffolding, Configuration & Data Layer
 
-- [ ] Task: Project Layout & Configuration Management
-    - [ ] Write unit tests for configuration loading and validation in `tests/unit/test_config.py`
-    - [ ] Implement Pydantic Settings in `src/app/config/settings.py` supporting bot tokens, admin IDs, database URLs, and server configurations
-    - [ ] Create `.env.example` and base project setup (`pyproject.toml`, Makefile, logging config with secret redaction)
+- [x] Task: Project Layout & Configuration Management (a0ac99c)
+    - [x] Write unit tests for configuration loading and validation in `tests/unit/test_config.py`
+    - [x] Implement Pydantic Settings in `src/app/config/settings.py` supporting bot tokens, admin IDs, database URLs, and server configurations
+    - [x] Create `.env.example` and base project setup (`pyproject.toml`, Makefile, logging config with secret redaction)
 - [ ] Task: Database Engine & SQLAlchemy Async Models
     - [ ] Write unit tests for database schemas, constraints, and models in `tests/unit/test_models.py`
     - [ ] Implement SQLAlchemy 2.0 declarative models in `src/app/db/models/` (`User`, `VPNServer`, `Product`, `Order`, `Subscription`, `ProvisioningJob`, `Notification`, `SupportTicket`, `SupportMessage`, `AuditEvent`)
