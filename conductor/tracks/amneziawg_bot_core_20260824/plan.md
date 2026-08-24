@@ -84,12 +84,12 @@
 - [x] Task: Docker & Deployment Scaffolding (49a20ff)
     - [x] Create `Dockerfile` with multi-stage build for `bot`, `worker`, and `scheduler`
     - [x] Create `docker-compose.yml` defining `postgres`, `bot`, `worker`, and `scheduler` services
-- [ ] Task: Comprehensive Documentation
-    - [ ] Create `docs/ARCHITECTURE.md` detailing system topology, outbox pattern, and security boundaries
-    - [ ] Create `docs/OPERATIONS.md` covering setup, backup, restoration, and incident response
-    - [ ] Create `docs/AMNEZIAWG_INTEGRATION.md` documenting AmneziaWG VPS assumptions and configuration
-    - [ ] Create `docs/SECURITY.md` detailing threat model and secret hygiene
-    - [ ] Create `README.md` with quick-start instructions and Makefile commands
+- [x] Task: Comprehensive Documentation (6ea1506)
+    - [x] Create `docs/ARCHITECTURE.md` detailing system topology, outbox pattern, and security boundaries
+    - [x] Create `docs/OPERATIONS.md` covering setup, backup, restoration, and incident response
+    - [x] Create `docs/AMNEZIAWG_INTEGRATION.md` documenting AmneziaWG VPS assumptions and configuration
+    - [x] Create `docs/SECURITY.md` detailing threat model and secret hygiene
+    - [x] Create `README.md` with quick-start instructions and Makefile commands
 - [ ] Task: End-to-End Mock Integration Test Suite
     - [ ] Write complete end-to-end flow test in `tests/e2e/test_full_lifecycle.py` verifying mock order, receipt submission, admin approval, worker delivery, expiry, and support ticket reply
 - [ ] Task: Conductor - User Manual Verification 'Phase 6: Containerization, Operational Tooling & Documentation' (Protocol in workflow.md)
