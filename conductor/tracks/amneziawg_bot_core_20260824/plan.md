@@ -42,7 +42,7 @@
     - [x] Write unit tests for reminder checks, idempotency keys, and expiry transitions in `tests/unit/test_scheduler.py`
     - [x] Implement APScheduler service in `src/app/scheduler/service.py` to evaluate expiring subscriptions and queue notifications/disable jobs
     - [x] Implement grace-period cleanup for peer removal (`PEER_REMOVAL_GRACE_DAYS`)
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Asynchronous Outbox Worker & Scheduler Engine' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Asynchronous Outbox Worker & Scheduler Engine' (Protocol in workflow.md)
 
 ## Phase 4: Telegram Bot - Customer Flows & Support System
 
