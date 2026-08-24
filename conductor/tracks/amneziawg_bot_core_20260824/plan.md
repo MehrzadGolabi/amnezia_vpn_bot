@@ -23,9 +23,9 @@
 - [x] Task: Provisioning Protocol & Mock Provisioner (15847f1)
     - [x] Write unit tests for `VPNProvisioner` protocol and `MockProvisioner` in `tests/unit/test_mock_provisioner.py`
     - [x] Implement `VPNProvisioner` interface and `MockProvisioner` returning structured in-memory configs in `src/app/integrations/provisioning/`
-- [ ] Task: SSH Command Provisioner
-    - [ ] Write unit tests for `SSHCommandProvisioner` with mocked SSH client and command validation in `tests/unit/test_ssh_provisioner.py`
-    - [ ] Implement `SSHCommandProvisioner` with strict argument validation, timeout handling, and host-key verification in `src/app/integrations/provisioning/ssh_provisioner.py`
+- [x] Task: SSH Command Provisioner (28816cf)
+    - [x] Write unit tests for `SSHCommandProvisioner` with mocked SSH client and command validation in `tests/unit/test_ssh_provisioner.py`
+    - [x] Implement `SSHCommandProvisioner` with strict argument validation, timeout handling, and host-key verification in `src/app/integrations/provisioning/ssh_provisioner.py`
 - [ ] Task: Remote Provisioning Tooling (`vpnctl`) & Setup Scripts
     - [ ] Write unit and validation tests for `vpnctl` CLI parsing and argument safety in `tests/unit/test_vpnctl.py`
     - [ ] Create `scripts/provisioner/vpnctl` supporting `create-peer`, `disable-peer`, `remove-peer`, `peer-status`, and `--dry-run`
