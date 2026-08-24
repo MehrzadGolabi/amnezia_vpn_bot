@@ -46,9 +46,10 @@
 
 ## Phase 4: Telegram Bot - Customer Flows & Support System
 
-- [ ] Task: Bot Core, Middleware & Localization Setup
-    - [ ] Write unit tests for bot initialization, authentication middleware, and error handling in `tests/unit/test_bot_middlewares.py`
-    - [ ] Set up aiogram 3.x Dispatcher, routers, structured logging middleware, and i18n text dictionaries in `src/app/bot/`
+- [x] Task: Bot Core, Middleware & Keyboard Builders (c4b1124)
+    - [x] Write unit tests for user registration middleware, rate limiter, and keyboard builders in `tests/unit/test_bot_core.py`
+    - [x] Implement user upsert middleware, rate-limiting middleware, and localization strings in `src/app/bot/middleware/`
+    - [x] Implement inline keyboard builders for server selection, plan selection, subscriptions, and support in `src/app/bot/keyboards/`
 - [ ] Task: Main Navigation & Purchase Flow
     - [ ] Write unit tests for `/start`, catalog selection, order drafting, and receipt upload in `tests/unit/test_customer_flow.py`
     - [ ] Implement handlers for `/start`, server selection, product plan selection, and order summary in `src/app/bot/handlers/customer.py`
