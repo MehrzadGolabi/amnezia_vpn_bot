@@ -68,6 +68,11 @@ async def init_data(session_factory, settings):
             )
 
         await session.commit()
+        logger.info(
+            "initialized_servers_and_products",
+            servers_count=len(settings.vpn_servers),
+            servers=list(settings.vpn_servers.keys()),
+        )
 
 
 async def main():

@@ -65,6 +65,16 @@ async def callback_menu_buy(query: CallbackQuery, data: Dict[str, Any]):
     server_repo = ServerRepository(session)
     servers = await server_repo.list_enabled()
 
+    if not servers:
+        empty_msg = "⚠️ <b>No VPN servers are currently active.</b>\nPlease check back shortly or contact support." if lang != "fa" else "⚠️ <b>در حال حاضر هیچ سروری در دسترس نیست.</b>\nلطفا با پشتیبانی تماس بگیرید یا دقایقی دیگر مراجعه فرمایید."
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=get_text("btn_back", lang), callback_data="main_menu")]
+        ])
+        if query.message:
+            await query.message.edit_text(empty_msg, reply_markup=kb, parse_mode="HTML")
+        await query.answer()
+        return
+
     text = get_text("select_server", lang)
     kb = get_servers_keyboard(servers, lang)
     if query.message:
