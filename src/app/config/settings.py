@@ -1,3 +1,4 @@
+import os
 import re
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
@@ -82,12 +83,34 @@ class Settings(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def extract_vpn_servers(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
+        source_dict: Dict[str, Any] = {}
+
+        # 1. Read from .env file if present
+        env_file_path = ".env"
+        if os.path.exists(env_file_path):
+            try:
+                from dotenv import dotenv_values
+                file_vals = dotenv_values(env_file_path)
+                for k, v in file_vals.items():
+                    if k and v is not None and k.startswith("VPN_SERVER_"):
+                        source_dict[k] = v
+            except Exception:
+                pass
+
+        # 2. Overlay OS environment variables (e.g. from Docker container environment)
+        for k, v in os.environ.items():
+            if k.startswith("VPN_SERVER_"):
+                source_dict[k] = v
+
+        # 3. Overlay explicit keyword arguments passed to Settings()
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if k.startswith("VPN_SERVER_"):
+                    source_dict[k] = v
 
         vpn_servers: Dict[str, Dict[str, Any]] = {}
         prefix = "VPN_SERVER_"
-        for key, value in list(data.items()):
+        for key, value in source_dict.items():
             if key.startswith(prefix):
                 rest = key[len(prefix):]
                 parts = rest.split("_")
@@ -116,12 +139,14 @@ class Settings(BaseSettings):
             if "country_code" in s_data and "display_name" in s_data:
                 final_servers[slug] = ServerConfig(**s_data)
 
-        existing = data.get("vpn_servers", {})
-        if isinstance(existing, dict):
-            final_servers.update(existing)
-
-        data["vpn_servers"] = final_servers
-        return data
+        if isinstance(data, dict):
+            existing = data.get("vpn_servers", {})
+            if isinstance(existing, dict):
+                final_servers.update(existing)
+            data["vpn_servers"] = final_servers
+            return data
+        else:
+            return {"vpn_servers": final_servers}
 
     def __repr__(self) -> str:
         return (
