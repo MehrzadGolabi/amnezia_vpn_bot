@@ -13,9 +13,9 @@
 - [x] Task: Alembic Migrations Setup (c8170e5)
     - [x] Configure Alembic async environment in `src/app/db/migrations/`
     - [x] Generate and verify initial migration script covering all required tables and indexes
-- [ ] Task: Data Repositories & Base Services
-    - [ ] Write unit tests for repository operations in `tests/unit/test_repositories.py`
-    - [ ] Implement repository classes in `src/app/db/repositories/` (`UserRepository`, `OrderRepository`, `SubscriptionRepository`, `JobRepository`, `TicketRepository`, `AuditRepository`)
+- [x] Task: Data Repositories & Base Services (1f581a1)
+    - [x] Write unit tests for repository operations in `tests/unit/test_repositories.py`
+    - [x] Implement repository classes in `src/app/db/repositories/` (`UserRepository`, `OrderRepository`, `SubscriptionRepository`, `JobRepository`, `TicketRepository`, `AuditRepository`)
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Project Scaffolding, Configuration & Data Layer' (Protocol in workflow.md)
 
 ## Phase 2: Provisioning Abstraction & Server-Side Tools
