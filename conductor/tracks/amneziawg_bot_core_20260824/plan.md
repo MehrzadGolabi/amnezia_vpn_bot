@@ -50,10 +50,10 @@
     - [x] Write unit tests for user registration middleware, rate limiter, and keyboard builders in `tests/unit/test_bot_core.py`
     - [x] Implement user upsert middleware, rate-limiting middleware, and localization strings in `src/app/bot/middleware/`
     - [x] Implement inline keyboard builders for server selection, plan selection, subscriptions, and support in `src/app/bot/keyboards/`
-- [ ] Task: Main Navigation & Purchase Flow
-    - [ ] Write unit tests for `/start`, catalog selection, order drafting, and receipt upload in `tests/unit/test_customer_flow.py`
-    - [ ] Implement handlers for `/start`, server selection, product plan selection, and order summary in `src/app/bot/handlers/customer.py`
-    - [ ] Implement receipt upload FSM handler (photos/documents + note) and transition to `receipt_submitted`
+- [x] Task: Main Navigation & Purchase Flow (fea315d)
+    - [x] Write unit tests for `/start`, catalog selection, order drafting, and receipt upload in `tests/unit/test_customer_flow.py`
+    - [x] Implement handlers for `/start`, server selection, product plan selection, and order summary in `src/app/bot/handlers/customer.py`
+    - [x] Implement receipt upload FSM handler (photos/documents + note) and transition to `receipt_submitted`
 - [ ] Task: Subscriptions Management & Config Delivery
     - [ ] Write unit tests for subscription listing, redelivery rate limits, and document delivery in `tests/unit/test_subscription_delivery.py`
     - [ ] Implement `My Subscriptions` handler with config redelivery and private document sending
