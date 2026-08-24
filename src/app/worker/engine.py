@@ -196,12 +196,12 @@ class WorkerEngine:
         logger.info("worker_started", worker_id=self.worker_id)
         while self._running:
             try:
-                processed = await self.run_single_batch()
-                if processed == 0:
-                    await asyncio.sleep(self.poll_interval)
+                await self.run_single_batch()
             except Exception as e:
                 logger.error("worker_loop_error", error=str(e))
-                await asyncio.sleep(self.poll_interval)
+            
+            # Always yield execution to prevent high CPU utilization on single-core nodes
+            await asyncio.sleep(self.poll_interval)
 
     def stop(self) -> None:
         self._running = False

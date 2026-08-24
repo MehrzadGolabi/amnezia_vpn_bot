@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import os
 import re
 import shlex
 import uuid
@@ -69,6 +70,9 @@ class SSHCommandProvisioner(VPNProvisioner):
 
         escaped_cmd = " ".join(shlex.quote(arg) for arg in command_args)
 
+        if key_path and not os.path.exists(key_path):
+            raise PermanentProvisioningError(f"SSH private key file not found on filesystem at: {key_path}")
+
         def _sync_ssh_run() -> Tuple[int, str, str]:
             client = paramiko.SSHClient()
             if known_hosts:
@@ -86,6 +90,8 @@ class SSHCommandProvisioner(VPNProvisioner):
                     timeout=self.connect_timeout,
                     banner_timeout=self.connect_timeout,
                     auth_timeout=self.connect_timeout,
+                    allow_agent=False,
+                    look_for_keys=False if key_path else True,
                 )
                 stdin, stdout, stderr = client.exec_command(
                     escaped_cmd,

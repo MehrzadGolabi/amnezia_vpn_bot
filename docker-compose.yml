@@ -9,6 +9,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-vpn_bot}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.40"
+          memory: 256M
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vpn_bot} -d ${POSTGRES_DB:-vpn_bot}"]
       interval: 5s
@@ -40,6 +45,11 @@ services:
     command: ["python", "-m", "src.app.bot.main"]
     env_file:
       - .env
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: 192M
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,6 +71,11 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./secrets:/app/secrets:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: 192M
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,6 +93,11 @@ services:
     command: ["python", "-m", "src.app.scheduler.main"]
     env_file:
       - .env
+    deploy:
+      resources:
+        limits:
+          cpus: "0.20"
+          memory: 128M
     depends_on:
       postgres:
         condition: service_healthy
