@@ -54,9 +54,9 @@
     - [x] Write unit tests for `/start`, catalog selection, order drafting, and receipt upload in `tests/unit/test_customer_flow.py`
     - [x] Implement handlers for `/start`, server selection, product plan selection, and order summary in `src/app/bot/handlers/customer.py`
     - [x] Implement receipt upload FSM handler (photos/documents + note) and transition to `receipt_submitted`
-- [ ] Task: Subscriptions Management & Config Delivery
-    - [ ] Write unit tests for subscription listing, redelivery rate limits, and document delivery in `tests/unit/test_subscription_delivery.py`
-    - [ ] Implement `My Subscriptions` handler with config redelivery and private document sending
+- [x] Task: Subscriptions Management & Config Delivery (aae0d2c)
+    - [x] Write unit tests for subscription listing, redelivery rate limits, and document delivery in `tests/unit/test_subscription_delivery.py`
+    - [x] Implement `My Subscriptions` handler with config redelivery and private document sending
 - [ ] Task: Customer Support Ticketing Flow
     - [ ] Write unit tests for support ticket creation and message forwarding in `tests/unit/test_support_customer.py`
     - [ ] Implement support handlers allowing customers to submit ticket messages and attachments in `src/app/bot/handlers/support.py`
