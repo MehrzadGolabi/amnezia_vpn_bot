@@ -26,10 +26,10 @@
 - [x] Task: SSH Command Provisioner (28816cf)
     - [x] Write unit tests for `SSHCommandProvisioner` with mocked SSH client and command validation in `tests/unit/test_ssh_provisioner.py`
     - [x] Implement `SSHCommandProvisioner` with strict argument validation, timeout handling, and host-key verification in `src/app/integrations/provisioning/ssh_provisioner.py`
-- [ ] Task: Remote Provisioning Tooling (`vpnctl`) & Setup Scripts
-    - [ ] Write unit and validation tests for `vpnctl` CLI parsing and argument safety in `tests/unit/test_vpnctl.py`
-    - [ ] Create `scripts/provisioner/vpnctl` supporting `create-peer`, `disable-peer`, `remove-peer`, `peer-status`, and `--dry-run`
-    - [ ] Create `scripts/provisioner/install-provisioner.sh` and scoped `sudoers` configuration example
+- [x] Task: Remote Provisioning Tooling (`vpnctl`) & Setup Scripts (daf0966)
+    - [x] Write unit and validation tests for `vpnctl` CLI parsing and argument safety in `tests/unit/test_vpnctl.py`
+    - [x] Create `scripts/provisioner/vpnctl` supporting `create-peer`, `disable-peer`, `remove-peer`, `peer-status`, and `--dry-run`
+    - [x] Create `scripts/provisioner/install-provisioner.sh` and scoped `sudoers` configuration example
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Provisioning Abstraction & Server-Side Tools' (Protocol in workflow.md)
 
 ## Phase 3: Asynchronous Outbox Worker & Scheduler Engine
