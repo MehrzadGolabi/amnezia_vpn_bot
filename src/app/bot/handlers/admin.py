@@ -11,7 +11,9 @@ from src.app.config.settings import get_settings
 from src.app.db.models.order import OrderStatus
 from src.app.db.models.ticket import SenderType, TicketStatus
 from src.app.db.repositories.order_repo import OrderRepository
+from src.app.db.repositories.product_repo import ProductRepository
 from src.app.db.repositories.server_repo import ServerRepository
+from src.app.db.repositories.subscription_repo import SubscriptionRepository
 from src.app.db.repositories.ticket_repo import TicketRepository
 from src.app.db.repositories.user_repo import UserRepository
 from src.app.utils.logging import get_logger
@@ -330,3 +332,164 @@ async def callback_admin_close_ticket(query: CallbackQuery, data: Dict[str, Any]
             await query.bot.send_message(chat_id=user.telegram_user_id, text=cust_text, parse_mode="HTML")
         except Exception as e:
             logger.error("admin_close_ticket_delivery_failed", error=str(e))
+
+
+@admin_router.message(Command("servers"))
+@admin_router.callback_query(F.data == "adm_servers_status")
+async def cmd_admin_servers(event: Any, data: Dict[str, Any]):
+    user_id = event.from_user.id if event.from_user else None
+    if not is_admin(user_id):
+        return
+
+    session: AsyncSession = data.get("session")
+    server_repo = ServerRepository(session)
+    servers = await server_repo.list_all()
+
+    text = f"🌐 <b>VPN Servers Management ({len(servers)} total)</b>\n\n"
+    buttons = []
+    for s in servers:
+        status_emoji = "🟢" if s.enabled else "🔴"
+        active_count = await server_repo.count_active_subscriptions(s.id)
+        cap = s.max_active_subscriptions or "∞"
+        text += (
+            f"{status_emoji} <b>{s.display_name}</b> (<code>{s.slug}</code>)\n"
+            f"Host: <code>{s.host}:{s.ssh_port}</code> | Country: {s.country_code}\n"
+            f"Active Peers: <code>{active_count}/{cap}</code>\n\n"
+        )
+        toggle_label = f"🔴 Disable {s.slug}" if s.enabled else f"🟢 Enable {s.slug}"
+        buttons.append([InlineKeyboardButton(text=toggle_label, callback_data=f"adm_tgl_srv_{s.id}")])
+
+    buttons.append([InlineKeyboardButton(text="🔙 Back", callback_data="adm_back")])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    if isinstance(event, CallbackQuery) and event.message:
+        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await event.answer()
+    elif isinstance(event, Message):
+        await event.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@admin_router.callback_query(F.data.startswith("adm_tgl_srv_"))
+async def callback_admin_toggle_server(query: CallbackQuery, data: Dict[str, Any]):
+    if not query.from_user or not is_admin(query.from_user.id):
+        await query.answer("Unauthorized", show_alert=True)
+        return
+
+    server_id = uuid.UUID(query.data.split("adm_tgl_srv_")[1])
+    session: AsyncSession = data.get("session")
+    server_repo = ServerRepository(session)
+
+    server = await server_repo.get_by_id(server_id)
+    if not server:
+        await query.answer("Server not found", show_alert=True)
+        return
+
+    server.enabled = not server.enabled
+    await session.commit()
+
+    await query.answer(f"Server {server.slug} is now {'ENABLED' if server.enabled else 'DISABLED'}.", show_alert=True)
+    await cmd_admin_servers(query, data)
+
+
+@admin_router.message(Command("products"))
+async def cmd_admin_products(message: Message, data: Dict[str, Any]):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    session: AsyncSession = data.get("session")
+    product_repo = ProductRepository(session)
+    products = await product_repo.list_enabled()
+
+    text = f"📦 <b>Active Products Catalogue ({len(products)} active)</b>\n\n"
+    for p in products:
+        text += (
+            f"• <b>{p.title}</b> (<code>{p.code}</code>)\n"
+            f"  Price: <code>{p.price_amount} {p.price_currency}</code> | "
+            f"Duration: <code>{p.duration_days} days</code> | "
+            f"Devices: <code>{p.device_limit}</code>\n\n"
+        )
+
+    await message.answer(text, parse_mode="HTML")
+
+
+@admin_router.message(Command("user"))
+async def cmd_admin_user_lookup(message: Message, data: Dict[str, Any]):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/user &lt;telegram_user_id&gt;</code>", parse_mode="HTML")
+        return
+
+    target_tg_id = int(parts[1])
+    session: AsyncSession = data.get("session")
+    user_repo = UserRepository(session)
+    sub_repo = SubscriptionRepository(session)
+
+    user = await user_repo.get_by_telegram_id(target_tg_id)
+    if not user:
+        await message.answer(f"User with Telegram ID <code>{target_tg_id}</code> not found.", parse_mode="HTML")
+        return
+
+    subs = await sub_repo.get_all_by_user_id(user.id)
+    block_status = "🔴 BLOCKED" if user.is_blocked else "🟢 ACTIVE"
+
+    text = (
+        f"👤 <b>User Profile:</b> <code>{user.telegram_user_id}</code>\n"
+        f"Username: @{user.username or 'N/A'}\n"
+        f"Language: <code>{user.language_code}</code>\n"
+        f"Status: {block_status}\n"
+        f"Total Subscriptions: <code>{len(subs)}</code>\n"
+        f"Created At: <code>{user.created_at.strftime('%Y-%m-%d %H:%M UTC') if user.created_at else 'N/A'}</code>"
+    )
+
+    await message.answer(text, parse_mode="HTML")
+
+
+@admin_router.message(Command("block"))
+async def cmd_admin_block_user(message: Message, data: Dict[str, Any]):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/block &lt;telegram_user_id&gt;</code>", parse_mode="HTML")
+        return
+
+    target_tg_id = int(parts[1])
+    session: AsyncSession = data.get("session")
+    user_repo = UserRepository(session)
+
+    user = await user_repo.get_by_telegram_id(target_tg_id)
+    if not user:
+        await message.answer(f"User <code>{target_tg_id}</code> not found.", parse_mode="HTML")
+        return
+
+    user.is_blocked = True
+    await session.commit()
+    await message.answer(f"🔒 User <code>{target_tg_id}</code> (@{user.username or 'N/A'}) has been suspended/blocked.", parse_mode="HTML")
+
+
+@admin_router.message(Command("unblock"))
+async def cmd_admin_unblock_user(message: Message, data: Dict[str, Any]):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/unblock &lt;telegram_user_id&gt;</code>", parse_mode="HTML")
+        return
+
+    target_tg_id = int(parts[1])
+    session: AsyncSession = data.get("session")
+    user_repo = UserRepository(session)
+
+    user = await user_repo.get_by_telegram_id(target_tg_id)
+    if not user:
+        await message.answer(f"User <code>{target_tg_id}</code> not found.", parse_mode="HTML")
+        return
+
+    user.is_blocked = False
+    await session.commit()
+    await message.answer(f"🔓 User <code>{target_tg_id}</code> (@{user.username or 'N/A'}) has been unblocked.", parse_mode="HTML")
