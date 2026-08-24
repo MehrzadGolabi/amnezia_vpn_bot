@@ -34,10 +34,10 @@
 
 ## Phase 3: Asynchronous Outbox Worker & Scheduler Engine
 
-- [ ] Task: Outbox Worker Engine
-    - [ ] Write unit tests for durable job locking, retries, and error classification in `tests/unit/test_worker.py`
-    - [ ] Implement transactional outbox worker loop in `src/app/worker/engine.py` for handling `create_peer`, `disable_peer`, `remove_peer`, and `redeliver_config`
-    - [ ] Implement error classification (retryable vs. permanent) and backoff calculation
+- [x] Task: Outbox Worker Engine (0cd7bda)
+    - [x] Write unit tests for durable job locking, retries, and error classification in `tests/unit/test_worker.py`
+    - [x] Implement transactional outbox worker loop in `src/app/worker/engine.py` for handling `create_peer`, `disable_peer`, `remove_peer`, and `redeliver_config`
+    - [x] Implement error classification (retryable vs. permanent) and backoff calculation
 - [ ] Task: Scheduler Service for Expiry & Reminders
     - [ ] Write unit tests for reminder checks, idempotency keys, and expiry transitions in `tests/unit/test_scheduler.py`
     - [ ] Implement APScheduler service in `src/app/scheduler/service.py` to evaluate expiring subscriptions and queue notifications/disable jobs
