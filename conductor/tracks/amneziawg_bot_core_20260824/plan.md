@@ -68,9 +68,9 @@
     - [x] Write unit tests for admin order approval, rejection with reason, and idempotency in `tests/unit/test_admin_approvals.py`
     - [x] Implement admin receipt verification handlers (`/admin`, `adm_app_<order_id>`, `adm_rej_<order_id>`) in `src/app/bot/handlers/admin.py`
     - [x] Implement notification dispatch to customer upon approval (with pending provisioning notice) or rejection (with reason)
-- [ ] Task: Admin Support Ticket Reply & Resolution
-    - [ ] Write unit tests for admin ticket replies, message routing, and ticket closing in `tests/unit/test_admin_support.py`
-    - [ ] Implement admin ticket conversation handlers (`adm_rep_tck_<id>`, `adm_cls_tck_<id>`) and message delivery to customers
+- [x] Task: Admin Support Ticket Reply & Resolution (9d5caa9)
+    - [x] Write unit tests for admin ticket replies, message routing, and ticket closing in `tests/unit/test_admin_support.py`
+    - [x] Implement admin ticket conversation handlers (`adm_rep_tck_<id>`, `adm_cls_tck_<id>`) and message delivery to customers
 - [ ] Task: Admin Server, Product, and User Management
     - [ ] Write unit tests for server toggling, product management, user lookup, and blocking in `tests/unit/test_admin_management.py`
     - [ ] Implement admin management commands (`/servers`, `/products`, `/user <id>`, `/block <id>`, `/unblock <id>`)
