@@ -134,7 +134,7 @@ class SSHCommandProvisioner(VPNProvisioner):
         device_name: str = "default",
     ) -> ProvisionedPeer:
         safe_sub_id = str(uuid.UUID(str(subscription_id)))
-        raw_label = f"user_{telegram_user_id}_{server.slug}"
+        raw_label = f"user_{telegram_user_id}_{safe_sub_id[:8]}_{server.slug}"
         safe_label = sanitize_identifier(raw_label)
 
         cmd = [

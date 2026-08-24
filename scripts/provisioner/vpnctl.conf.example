@@ -1,5 +1,26 @@
-# Configuration for vpnctl on remote VPN VPS
-DOCKER_CONTAINER=amnezia-awg
-WG_CONFIG_PATH=/opt/amnezia/awg/wg0.conf
-WG_SERVER_PORT=51820
-INTERFACE_NAME=wg0
+# Configuration for vpnctl on remote VPN VPS (/etc/amnezia/vpnctl.conf)
+
+# 1. Public Server Endpoint
+SERVER_HOST=155.103.71.232
+SERVER_PORT=36466
+
+# 2. Server Public Key (from Amnezia container /opt/amnezia/awg/wg0.conf or awg show)
+SERVER_PUBKEY=
+
+# 3. Network & DNS
+SUBNET_PREFIX=10.8.0
+DNS_SERVERS=1.1.1.1, 8.8.8.8
+
+# 4. AmneziaWG Obfuscation Parameters (Must match your server's container wg0.conf)
+JC=4
+JMIN=40
+JMAX=70
+S1=15
+S2=30
+H1=1
+H2=2
+H3=3
+H4=4
+
+# 5. Docker container name (Auto-detected if not specified)
+VPNCTL_CONTAINER=amnezia-awg2
