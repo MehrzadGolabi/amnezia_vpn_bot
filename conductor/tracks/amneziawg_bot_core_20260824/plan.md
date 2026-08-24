@@ -71,9 +71,9 @@
 - [x] Task: Admin Support Ticket Reply & Resolution (9d5caa9)
     - [x] Write unit tests for admin ticket replies, message routing, and ticket closing in `tests/unit/test_admin_support.py`
     - [x] Implement admin ticket conversation handlers (`adm_rep_tck_<id>`, `adm_cls_tck_<id>`) and message delivery to customers
-- [ ] Task: Admin Server, Product, and User Management
-    - [ ] Write unit tests for server toggling, product management, user lookup, and blocking in `tests/unit/test_admin_management.py`
-    - [ ] Implement admin management commands (`/servers`, `/products`, `/user <id>`, `/block <id>`, `/unblock <id>`)
+- [x] Task: Admin Server, Product, and User Management (ac38808)
+    - [x] Write unit tests for server toggling, product management, user lookup, and blocking in `tests/unit/test_admin_management.py`
+    - [x] Implement admin management commands (`/servers`, `/products`, `/user <id>`, `/block <id>`, `/unblock <id>`)
 - [ ] Task: Conductor - User Manual Verification 'Phase 5: Telegram Bot - Admin Dashboard, Verification & Management' (Protocol in workflow.md)
 
 ## Phase 6: Containerization, Operational Tooling & Documentation
