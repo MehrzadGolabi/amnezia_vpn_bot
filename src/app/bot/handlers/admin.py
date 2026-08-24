@@ -26,7 +26,27 @@ def is_admin(user_id: Optional[int]) -> bool:
     if not user_id:
         return False
     settings = get_settings()
-    return user_id in settings.ADMIN_TELEGRAM_IDS
+    admin_ids = set()
+    if isinstance(settings.ADMIN_TELEGRAM_IDS, (list, tuple, set)):
+        for x in settings.ADMIN_TELEGRAM_IDS:
+            try:
+                admin_ids.add(int(x))
+            except (ValueError, TypeError):
+                pass
+    elif isinstance(settings.ADMIN_TELEGRAM_IDS, int):
+        admin_ids.add(settings.ADMIN_TELEGRAM_IDS)
+    elif isinstance(settings.ADMIN_TELEGRAM_IDS, str):
+        for p in settings.ADMIN_TELEGRAM_IDS.split(","):
+            if p.strip().isdigit():
+                admin_ids.add(int(p.strip()))
+
+    if settings.ADMIN_CHAT_ID and settings.ADMIN_CHAT_ID > 0:
+        admin_ids.add(int(settings.ADMIN_CHAT_ID))
+
+    try:
+        return int(user_id) in admin_ids
+    except (ValueError, TypeError):
+        return False
 
 
 @admin_router.message(Command("admin"))

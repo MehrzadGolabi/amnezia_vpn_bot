@@ -56,20 +56,24 @@ class Settings(BaseSettings):
     @field_validator("ADMIN_TELEGRAM_IDS", mode="before")
     @classmethod
     def parse_admin_telegram_ids(cls, v: Any) -> List[int]:
+        if isinstance(v, int):
+            return [v]
         if isinstance(v, str):
             parts = [p.strip() for p in v.split(",") if p.strip()]
             return [int(p) for p in parts]
-        if isinstance(v, (list, tuple)):
+        if isinstance(v, (list, tuple, set)):
             return [int(x) for x in v]
         return []
 
     @field_validator("REMINDER_DAYS_BEFORE_EXPIRY", mode="before")
     @classmethod
     def parse_reminder_days(cls, v: Any) -> List[int]:
+        if isinstance(v, int):
+            return [v]
         if isinstance(v, str):
             parts = [p.strip() for p in v.split(",") if p.strip()]
             return [int(p) for p in parts]
-        if isinstance(v, (list, tuple)):
+        if isinstance(v, (list, tuple, set)):
             return [int(x) for x in v]
         return [7, 3, 1]
 
