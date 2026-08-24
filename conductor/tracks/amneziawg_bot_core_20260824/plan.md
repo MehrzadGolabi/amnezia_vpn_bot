@@ -81,9 +81,9 @@
 - [x] Task: Operational Utilities & Health Monitoring (c0ea47e)
     - [x] Write tests for health checks, audit logging, and peer reconciliation in `tests/unit/test_operations.py`
     - [x] Implement `/healthz` container healthcheck and non-destructive peer reconciliation script in `src/app/utils/`
-- [ ] Task: Docker & Deployment Scaffolding
-    - [ ] Create `Dockerfile` with multi-stage build for `bot`, `worker`, and `scheduler`
-    - [ ] Create `docker-compose.yml` defining `postgres`, `bot`, `worker`, and `scheduler` services
+- [x] Task: Docker & Deployment Scaffolding (49a20ff)
+    - [x] Create `Dockerfile` with multi-stage build for `bot`, `worker`, and `scheduler`
+    - [x] Create `docker-compose.yml` defining `postgres`, `bot`, `worker`, and `scheduler` services
 - [ ] Task: Comprehensive Documentation
     - [ ] Create `docs/ARCHITECTURE.md` detailing system topology, outbox pattern, and security boundaries
     - [ ] Create `docs/OPERATIONS.md` covering setup, backup, restoration, and incident response
