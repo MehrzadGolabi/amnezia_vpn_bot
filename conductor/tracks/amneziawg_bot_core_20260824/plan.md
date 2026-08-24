@@ -10,9 +10,9 @@
     - [x] Write unit tests for database schemas, constraints, and models in `tests/unit/test_models.py`
     - [x] Implement SQLAlchemy 2.0 declarative models in `src/app/db/models/` (`User`, `VPNServer`, `Product`, `Order`, `Subscription`, `ProvisioningJob`, `Notification`, `SupportTicket`, `SupportMessage`, `AuditEvent`)
     - [x] Set up async database session management and engine in `src/app/db/session.py`
-- [ ] Task: Alembic Migrations Setup
-    - [ ] Configure Alembic async environment in `src/app/db/migrations/`
-    - [ ] Generate and verify initial migration script covering all required tables and indexes
+- [x] Task: Alembic Migrations Setup (c8170e5)
+    - [x] Configure Alembic async environment in `src/app/db/migrations/`
+    - [x] Generate and verify initial migration script covering all required tables and indexes
 - [ ] Task: Data Repositories & Base Services
     - [ ] Write unit tests for repository operations in `tests/unit/test_repositories.py`
     - [ ] Implement repository classes in `src/app/db/repositories/` (`UserRepository`, `OrderRepository`, `SubscriptionRepository`, `JobRepository`, `TicketRepository`, `AuditRepository`)
