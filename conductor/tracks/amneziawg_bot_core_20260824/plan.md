@@ -90,6 +90,6 @@
     - [x] Create `docs/AMNEZIAWG_INTEGRATION.md` documenting AmneziaWG VPS assumptions and configuration
     - [x] Create `docs/SECURITY.md` detailing threat model and secret hygiene
     - [x] Create `README.md` with quick-start instructions and Makefile commands
-- [ ] Task: End-to-End Mock Integration Test Suite
-    - [ ] Write complete end-to-end flow test in `tests/e2e/test_full_lifecycle.py` verifying mock order, receipt submission, admin approval, worker delivery, expiry, and support ticket reply
+- [x] Task: End-to-End Mock Integration Test Suite (02c4071)
+    - [x] Write complete end-to-end flow test in `tests/e2e/test_full_lifecycle.py` verifying mock order, receipt submission, admin approval, worker delivery, expiry, and support ticket reply
 - [ ] Task: Conductor - User Manual Verification 'Phase 6: Containerization, Operational Tooling & Documentation' (Protocol in workflow.md)
