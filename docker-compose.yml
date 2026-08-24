@@ -64,7 +64,6 @@ services:
       dockerfile: Dockerfile
     container_name: awg_worker
     restart: unless-stopped
-    user: "0:0"
     command: ["python", "-m", "src.app.worker.main"]
     env_file:
       - .env
