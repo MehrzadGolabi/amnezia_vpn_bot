@@ -64,15 +64,16 @@
 
 ## Phase 5: Telegram Bot - Admin Dashboard, Verification & Management
 
-- [ ] Task: Admin Receipt Verification & Idempotent Approvals
-    - [ ] Write unit tests for admin authorization, receipt card formatting, and idempotent approval/rejection in `tests/unit/test_admin_verification.py`
-    - [ ] Implement admin receipt forwarding, inline action buttons (`Approve`, `Reject`, `User Subscriptions`), and atomic state transitions in `src/app/bot/handlers/admin_orders.py`
-- [ ] Task: Admin Commands & Dashboard
-    - [ ] Write unit tests for `/admin`, `/orders`, `/servers`, `/extend`, `/disable`, and `/retry` in `tests/unit/test_admin_commands.py`
-    - [ ] Implement admin management handlers in `src/app/bot/handlers/admin_mgmt.py`
-- [ ] Task: Admin Support Ticket Bridge
-    - [ ] Write unit tests for admin ticket replies (message reply and `/reply`) in `tests/unit/test_admin_support.py`
-    - [ ] Implement admin support response routing and ticket resolution handlers in `src/app/bot/handlers/admin_support.py`
+- [x] Task: Admin Receipt Verification & Idempotent Approvals (62f08ab)
+    - [x] Write unit tests for admin order approval, rejection with reason, and idempotency in `tests/unit/test_admin_approvals.py`
+    - [x] Implement admin receipt verification handlers (`/admin`, `adm_app_<order_id>`, `adm_rej_<order_id>`) in `src/app/bot/handlers/admin.py`
+    - [x] Implement notification dispatch to customer upon approval (with pending provisioning notice) or rejection (with reason)
+- [ ] Task: Admin Support Ticket Reply & Resolution
+    - [ ] Write unit tests for admin ticket replies, message routing, and ticket closing in `tests/unit/test_admin_support.py`
+    - [ ] Implement admin ticket conversation handlers (`adm_rep_tck_<id>`, `adm_cls_tck_<id>`) and message delivery to customers
+- [ ] Task: Admin Server, Product, and User Management
+    - [ ] Write unit tests for server toggling, product management, user lookup, and blocking in `tests/unit/test_admin_management.py`
+    - [ ] Implement admin management commands (`/servers`, `/products`, `/user <id>`, `/block <id>`, `/unblock <id>`)
 - [ ] Task: Conductor - User Manual Verification 'Phase 5: Telegram Bot - Admin Dashboard, Verification & Management' (Protocol in workflow.md)
 
 ## Phase 6: Containerization, Operational Tooling & Documentation
