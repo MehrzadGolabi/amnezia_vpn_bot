@@ -6,10 +6,10 @@
     - [x] Write unit tests for configuration loading and validation in `tests/unit/test_config.py`
     - [x] Implement Pydantic Settings in `src/app/config/settings.py` supporting bot tokens, admin IDs, database URLs, and server configurations
     - [x] Create `.env.example` and base project setup (`pyproject.toml`, Makefile, logging config with secret redaction)
-- [ ] Task: Database Engine & SQLAlchemy Async Models
-    - [ ] Write unit tests for database schemas, constraints, and models in `tests/unit/test_models.py`
-    - [ ] Implement SQLAlchemy 2.0 declarative models in `src/app/db/models/` (`User`, `VPNServer`, `Product`, `Order`, `Subscription`, `ProvisioningJob`, `Notification`, `SupportTicket`, `SupportMessage`, `AuditEvent`)
-    - [ ] Set up async database session management and engine in `src/app/db/session.py`
+- [x] Task: Database Engine & SQLAlchemy Async Models (b6ac501)
+    - [x] Write unit tests for database schemas, constraints, and models in `tests/unit/test_models.py`
+    - [x] Implement SQLAlchemy 2.0 declarative models in `src/app/db/models/` (`User`, `VPNServer`, `Product`, `Order`, `Subscription`, `ProvisioningJob`, `Notification`, `SupportTicket`, `SupportMessage`, `AuditEvent`)
+    - [x] Set up async database session management and engine in `src/app/db/session.py`
 - [ ] Task: Alembic Migrations Setup
     - [ ] Configure Alembic async environment in `src/app/db/migrations/`
     - [ ] Generate and verify initial migration script covering all required tables and indexes
