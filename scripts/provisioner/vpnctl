@@ -13,7 +13,6 @@ import secrets
 import string
 import subprocess
 import sys
-import tempfile
 import uuid
 
 IDENTIFIER_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
@@ -99,6 +98,35 @@ def get_active_container() -> str:
     return container
 
 
+def get_awg_block(cfg: dict) -> str:
+    awg_param_keys = [
+        "Jc", "Jmin", "Jmax",
+        "S1", "S2", "S3", "S4",
+        "H1", "H2", "H3", "H4",
+        "I1", "I2", "I3", "I4",
+    ]
+    awg_lines = []
+    cfg_lookup = {k.upper(): v for k, v in cfg.items()}
+    for param in awg_param_keys:
+        val = cfg_lookup.get(param.upper())
+        if val is not None and val != "":
+            awg_lines.append(f"{param} = {val}")
+
+    return "\n".join(awg_lines)
+
+
+def get_client_ip(cfg: dict) -> str:
+    raw_subnet = cfg.get("SUBNET_PREFIX", "10.8.0").split("/")[0].strip()
+    parts = raw_subnet.split(".")
+    if len(parts) >= 3:
+        subnet_base = ".".join(parts[:3])
+    else:
+        subnet_base = "10.8.0"
+
+    ip_octet = secrets.randbelow(200) + 10
+    return f"{subnet_base}.{ip_octet}"
+
+
 def cmd_create_peer(args):
     sub_id = validate_uuid(args.subscription_id)
     raw_label = validate_identifier("label", args.label)
@@ -118,9 +146,8 @@ def cmd_create_peer(args):
     psk = generate_wg_key()
     server_pub = cfg.get("SERVER_PUBKEY") or generate_wg_key()
 
-    # Random IP in subnet
-    ip_octet = secrets.randbelow(200) + 2
-    client_ip = f"{cfg['SUBNET_PREFIX']}.{ip_octet}"
+    client_ip = get_client_ip(cfg)
+    awg_block = get_awg_block(cfg)
 
     if not args.dry_run:
         container = get_active_container()
@@ -137,15 +164,7 @@ def cmd_create_peer(args):
         f"Address = {client_ip}/32\n"
         f"PrivateKey = {priv_key}\n"
         f"DNS = {cfg['DNS_SERVERS']}\n"
-        f"Jc = {cfg['JC']}\n"
-        f"Jmin = {cfg['JMIN']}\n"
-        f"Jmax = {cfg['JMAX']}\n"
-        f"S1 = {cfg['S1']}\n"
-        f"S2 = {cfg['S2']}\n"
-        f"H1 = {cfg['H1']}\n"
-        f"H2 = {cfg['H2']}\n"
-        f"H3 = {cfg['H3']}\n"
-        f"H4 = {cfg['H4']}\n\n"
+        f"{awg_block}\n\n"
         f"[Peer]\n"
         f"PublicKey = {server_pub}\n"
         f"PresharedKey = {psk}\n"
@@ -172,7 +191,6 @@ def cmd_disable_peer(args):
         container = get_active_container()
         check = run_cmd(["docker", "ps", "--filter", f"name={container}", "--format", "{{.Names}}"])
         if container in check.stdout:
-            # Disable peer in container
             pass
     print(json.dumps({"status": "success", "peer_id": peer_id, "dry_run": bool(args.dry_run)}))
 
@@ -183,7 +201,6 @@ def cmd_remove_peer(args):
         container = get_active_container()
         check = run_cmd(["docker", "ps", "--filter", f"name={container}", "--format", "{{.Names}}"])
         if container in check.stdout:
-            # Remove peer from container
             pass
     print(json.dumps({"status": "success", "peer_id": peer_id, "dry_run": bool(args.dry_run)}))
 
@@ -207,20 +224,15 @@ def cmd_get_config(args):
     priv_key = generate_wg_key()
     server_pub = cfg.get("SERVER_PUBKEY") or generate_wg_key()
     psk = generate_wg_key()
+    client_ip = get_client_ip(cfg)
+    awg_block = get_awg_block(cfg)
+
     config_text = (
         f"[Interface]\n"
-        f"Address = {cfg['SUBNET_PREFIX']}.50/32\n"
+        f"Address = {client_ip}/32\n"
         f"PrivateKey = {priv_key}\n"
         f"DNS = {cfg['DNS_SERVERS']}\n"
-        f"Jc = {cfg['JC']}\n"
-        f"Jmin = {cfg['JMIN']}\n"
-        f"Jmax = {cfg['JMAX']}\n"
-        f"S1 = {cfg['S1']}\n"
-        f"S2 = {cfg['S2']}\n"
-        f"H1 = {cfg['H1']}\n"
-        f"H2 = {cfg['H2']}\n"
-        f"H3 = {cfg['H3']}\n"
-        f"H4 = {cfg['H4']}\n\n"
+        f"{awg_block}\n\n"
         f"[Peer]\n"
         f"PublicKey = {server_pub}\n"
         f"PresharedKey = {psk}\n"
