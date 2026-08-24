@@ -1,3 +1,4 @@
+import base64
 import secrets
 import string
 import uuid
@@ -20,8 +21,7 @@ class MockProvisioner(VPNProvisioner):
         self._peers: Dict[str, dict] = {}
 
     def _generate_key(self) -> str:
-        alphabet = string.ascii_letters + string.digits + "+/="
-        return "".join(secrets.choice(alphabet) for _ in range(44))
+        return base64.b64encode(secrets.token_bytes(32)).decode("ascii")
 
     async def create_peer(
         self,
