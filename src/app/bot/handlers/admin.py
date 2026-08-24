@@ -2,11 +2,14 @@ import uuid
 from typing import Any, Dict, Optional
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.bot.states.admin_states import AdminTicketStates
 from src.app.config.settings import get_settings
 from src.app.db.models.order import OrderStatus
+from src.app.db.models.ticket import SenderType, TicketStatus
 from src.app.db.repositories.order_repo import OrderRepository
 from src.app.db.repositories.server_repo import ServerRepository
 from src.app.db.repositories.ticket_repo import TicketRepository
@@ -171,3 +174,159 @@ async def callback_admin_reject_order(query: CallbackQuery, data: Dict[str, Any]
             await query.bot.send_message(chat_id=user.telegram_user_id, text=cust_msg, parse_mode="HTML")
         except Exception as e:
             logger.error("customer_rejection_notification_failed", error=str(e))
+
+
+@admin_router.callback_query(F.data == "adm_open_tickets")
+async def callback_admin_open_tickets(query: CallbackQuery, data: Dict[str, Any]):
+    if not query.from_user or not is_admin(query.from_user.id):
+        await query.answer("Unauthorized", show_alert=True)
+        return
+
+    session: AsyncSession = data.get("session")
+    ticket_repo = TicketRepository(session)
+    tickets = await ticket_repo.list_open_tickets()
+
+    if not tickets:
+        await query.answer("No open support tickets.", show_alert=True)
+        return
+
+    text = f"📩 <b>Open Support Tickets ({len(tickets)}):</b>\n\n"
+    buttons = []
+    for t in tickets[:10]:
+        user_tag = f"@{t.user.username}" if t.user and t.user.username else f"{t.user.telegram_user_id if t.user else 'Unknown'}"
+        text += f"• <code>{t.public_ticket_code}</code> | {user_tag} | {t.status.value}\n"
+        buttons.append([InlineKeyboardButton(text=f"✍️ {t.public_ticket_code}", callback_data=f"adm_rep_tck_{t.id}")])
+
+    buttons.append([InlineKeyboardButton(text="🔙 Back", callback_data="adm_back")])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    if query.message:
+        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await query.answer()
+
+
+@admin_router.callback_query(F.data.startswith("adm_rep_tck_"))
+async def callback_admin_reply_ticket(query: CallbackQuery, data: Dict[str, Any], state: FSMContext):
+    if not query.from_user or not is_admin(query.from_user.id):
+        await query.answer("Unauthorized", show_alert=True)
+        return
+
+    ticket_id_str = query.data.split("adm_rep_tck_")[1]
+    ticket_id = uuid.UUID(ticket_id_str)
+    session: AsyncSession = data.get("session")
+    ticket_repo = TicketRepository(session)
+
+    ticket = await ticket_repo.get_by_id(ticket_id)
+    if not ticket:
+        await query.answer("Ticket not found", show_alert=True)
+        return
+
+    await state.set_state(AdminTicketStates.waiting_for_reply)
+    await state.update_data(ticket_id=str(ticket.id))
+
+    if query.message:
+        await query.message.answer(
+            f"✍️ <b>Replying to Ticket</b> <code>{ticket.public_ticket_code}</code>\n"
+            f"Please enter your reply below:",
+            parse_mode="HTML",
+        )
+    await query.answer()
+
+
+@admin_router.message(AdminTicketStates.waiting_for_reply)
+async def handle_admin_ticket_reply(message: Message, data: Dict[str, Any], state: FSMContext):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    session: AsyncSession = data.get("session")
+    state_data = await state.get_data()
+    ticket_id_str = state_data.get("ticket_id")
+    if not ticket_id_str:
+        await state.clear()
+        return
+
+    ticket_id = uuid.UUID(ticket_id_str)
+    ticket_repo = TicketRepository(session)
+    user_repo = UserRepository(session)
+
+    ticket = await ticket_repo.get_by_id(ticket_id)
+    if not ticket:
+        await state.clear()
+        return
+
+    reply_body = message.text or message.caption or "Admin attachment response"
+    file_id = message.photo[-1].file_id if message.photo else (message.document.file_id if message.document else None)
+    media_type = "photo" if message.photo else ("document" if message.document else None)
+
+    await ticket_repo.add_message(
+        ticket_id=ticket.id,
+        sender_type=SenderType.ADMIN,
+        sender_telegram_user_id=message.from_user.id,
+        body=reply_body,
+        telegram_chat_id=message.chat.id,
+        telegram_message_id=message.message_id,
+        attachment_file_id=file_id,
+        attachment_type=media_type,
+    )
+    await session.commit()
+    await state.clear()
+
+    # Deliver to customer
+    user = await user_repo.get_by_id(ticket.user_id)
+    if user and message.bot:
+        cust_text = (
+            f"💬 <b>Support Reply:</b> <code>{ticket.public_ticket_code}</code>\n\n"
+            f"{reply_body}\n\n"
+            f"<i>You can reply to this message to continue the conversation.</i>"
+        )
+        try:
+            await message.bot.send_message(chat_id=user.telegram_user_id, text=cust_text, parse_mode="HTML")
+        except Exception as e:
+            logger.error("admin_reply_delivery_failed", error=str(e))
+
+    await message.answer(f"✅ Reply delivered to user for ticket <code>{ticket.public_ticket_code}</code>.", parse_mode="HTML")
+
+
+@admin_router.callback_query(F.data.startswith("adm_cls_tck_"))
+async def callback_admin_close_ticket(query: CallbackQuery, data: Dict[str, Any]):
+    if not query.from_user or not is_admin(query.from_user.id):
+        await query.answer("Unauthorized", show_alert=True)
+        return
+
+    ticket_id_str = query.data.split("adm_cls_tck_")[1]
+    ticket_id = uuid.UUID(ticket_id_str)
+    session: AsyncSession = data.get("session")
+    ticket_repo = TicketRepository(session)
+    user_repo = UserRepository(session)
+
+    ticket = await ticket_repo.close_ticket(ticket_id)
+    await session.commit()
+
+    if not ticket:
+        await query.answer("Ticket not found", show_alert=True)
+        return
+
+    admin_tag = f"@{query.from_user.username}" if query.from_user.username else str(query.from_user.id)
+    if query.message:
+        try:
+            await query.message.edit_text(
+                f"🔒 <b>Ticket {ticket.public_ticket_code} Closed</b> by {admin_tag}.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+    await query.answer("Ticket closed.", show_alert=True)
+
+    # Deliver to customer
+    user = await user_repo.get_by_id(ticket.user_id)
+    if user and query.bot:
+        cust_text = (
+            f"🔒 <b>Support Ticket Closed</b>\n\n"
+            f"Ticket <code>{ticket.public_ticket_code}</code> has been marked as resolved.\n"
+            f"Feel free to open a new support request if you need further help."
+        )
+        try:
+            await query.bot.send_message(chat_id=user.telegram_user_id, text=cust_text, parse_mode="HTML")
+        except Exception as e:
+            logger.error("admin_close_ticket_delivery_failed", error=str(e))
