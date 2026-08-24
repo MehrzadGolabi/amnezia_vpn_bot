@@ -33,9 +33,8 @@ RUN groupadd -g 1000 appuser && \
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy application source code and migrations
+# Copy application source code, config, and scripts
 COPY src/ /app/src/
-COPY alembic/ /app/alembic/
 COPY alembic.ini /app/
 COPY scripts/ /app/scripts/
 
