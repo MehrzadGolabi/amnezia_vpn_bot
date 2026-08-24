@@ -3,6 +3,7 @@ from decimal import Decimal
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import ErrorEvent
 
 from src.app.config.settings import get_settings
 from src.app.db.session import get_session_factory
@@ -86,6 +87,11 @@ async def main():
         await init_data(session_factory, settings)
     except Exception as e:
         logger.error("data_initialization_failed", error=str(e))
+
+    # Register error handler
+    @dp.error()
+    async def error_handler(event: ErrorEvent):
+        logger.error("telegram_bot_handler_exception", error=str(event.exception), exc_info=event.exception)
 
     # Register middlewares
     user_middleware = UserMiddleware(session_factory=session_factory)

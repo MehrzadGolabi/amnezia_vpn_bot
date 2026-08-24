@@ -21,6 +21,7 @@ class UserMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
+        data["data"] = data
         tg_user: TelegramUser = getattr(event, "from_user", None)
         if not tg_user:
             return await handler(event, data)
