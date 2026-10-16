@@ -3,6 +3,9 @@ set -euo pipefail
 
 echo "==> Setting up vpn-provisioner service account on AmneziaWG host"
 
+command -v python3 >/dev/null || { echo "python3 is required for vpnctl"; exit 1; }
+command -v awg >/dev/null || echo "WARNING: awg not found. Install amneziawg-tools 3.1 first (see the migration guide)."
+
 # 1. Create dedicated system user
 if ! id "vpn-provisioner" &>/dev/null; then
     useradd -r -s /bin/bash -m -d /home/vpn-provisioner vpn-provisioner
@@ -30,12 +33,20 @@ if [ -f "$SCRIPT_SRC" ]; then
     echo "Installed /usr/local/sbin/vpnctl"
 fi
 
-# 4. Install Sudoers configuration
+# 4. vpnctl settings (kept if they already exist)
+CONF_SRC="$(dirname "$0")/vpnctl.conf.example"
+if [ ! -f /etc/amnezia/vpnctl.conf ] && [ -f "$CONF_SRC" ]; then
+    install -D -m 600 -o root -g root "$CONF_SRC" /etc/amnezia/vpnctl.conf
+    echo "Installed /etc/amnezia/vpnctl.conf - check INTERFACE and ENDPOINT_HOST"
+fi
+
+# 5. Install Sudoers configuration
 SUDOERS_SRC="$(dirname "$0")/sudoers.example"
 if [ -f "$SUDOERS_SRC" ]; then
-    cp "$SUDOERS_SRC" /etc/sudoers.d/vpn-provisioner
-    chmod 440 /etc/sudoers.d/vpn-provisioner
+    visudo -cf "$SUDOERS_SRC" >/dev/null
+    install -m 440 -o root -g root "$SUDOERS_SRC" /etc/sudoers.d/vpn-provisioner
     echo "Installed /etc/sudoers.d/vpn-provisioner"
 fi
 
-echo "==> Provisioner setup complete. Verify with: sudo -u vpn-provisioner /usr/local/sbin/vpnctl --help"
+echo "==> Provisioner setup complete. Verify with:"
+echo "    sudo -u vpn-provisioner sudo -n /usr/local/sbin/vpnctl peer-status --peer-id test"

@@ -6,7 +6,7 @@ import re
 import shlex
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import paramiko
 from src.app.config.settings import get_settings
@@ -41,13 +41,140 @@ def sanitize_identifier(value: str) -> str:
     return value
 
 
-class SSHCommandProvisioner(VPNProvisioner):
+DEFAULT_VPNCTL_COMMAND = "sudo -n /usr/local/sbin/vpnctl"
+# vpnctl exits with 2 for bad input and 3 for an unknown client; retrying can't help.
+VPNCTL_PERMANENT_EXITS = (2, 3)
+
+
+def _vpnctl_prefix(command: Optional[str]) -> List[str]:
+    if command is None:
+        command = getattr(get_settings(), "VPNCTL_COMMAND", None) or DEFAULT_VPNCTL_COMMAND
+    return shlex.split(command)
+
+
+class VpnctlProvisioner(VPNProvisioner):
     """
-    Production-grade SSH Provisioner that executes constrained commands via
-    the narrow remote interface /usr/local/sbin/vpnctl using explicit arguments.
+    Talks to scripts/provisioner/vpnctl, which manages clients on a native
+    amneziawg-go + awg-quick server. Subclasses decide where vpnctl runs.
     """
 
-    def __init__(self, connect_timeout: int = 15, command_timeout: int = 30):
+    def __init__(self, vpnctl_command: Optional[str] = None):
+        self.vpnctl_prefix = _vpnctl_prefix(vpnctl_command)
+
+    async def _execute_remote_command(
+        self,
+        *,
+        server: VPNServer,
+        command_args: List[str],
+    ) -> Tuple[int, str, str]:
+        raise NotImplementedError
+
+    async def _vpnctl(self, server: VPNServer, *args: str) -> Tuple[int, str, str]:
+        return await self._execute_remote_command(server=server, command_args=[*self.vpnctl_prefix, *args])
+
+    @staticmethod
+    def _classify_failure(exit_code: int, stdout: str, stderr: str) -> ProvisioningError:
+        err_msg = stderr.strip() or stdout.strip() or f"vpnctl failed with exit code {exit_code}"
+        if exit_code in VPNCTL_PERMANENT_EXITS or "already exists" in err_msg.lower():
+            return PermanentProvisioningError(err_msg)
+        return RetryableProvisioningError(err_msg)
+
+    async def _run_checked(self, server: VPNServer, event: str, *args: str) -> dict:
+        exit_code, stdout, stderr = await self._vpnctl(server, *args)
+        if exit_code != 0:
+            error = self._classify_failure(exit_code, stdout, stderr)
+            logger.error(event, server=server.slug, error=str(error))
+            raise error
+        try:
+            return json.loads(stdout.strip())
+        except ValueError as e:
+            logger.error("invalid_vpnctl_output", server=server.slug, stdout=stdout, error=str(e))
+            raise RetryableProvisioningError(f"Malformed response from vpnctl: {e}") from e
+
+    async def create_peer(
+        self,
+        *,
+        server: VPNServer,
+        subscription_id: uuid.UUID,
+        telegram_user_id: int,
+        device_name: str = "default",
+    ) -> ProvisionedPeer:
+        safe_sub_id = str(uuid.UUID(str(subscription_id)))
+        safe_label = sanitize_identifier(f"user_{telegram_user_id}_{safe_sub_id[:8]}_{server.slug}")
+
+        data = await self._run_checked(
+            server, "provisioning_create_peer_failed",
+            "create-peer", "--subscription-id", safe_sub_id, "--label", safe_label,
+        )
+        try:
+            peer_id = sanitize_identifier(data["peer_id"])
+            label = sanitize_identifier(data.get("label", safe_label))
+            filename = data.get("filename", f"{label}.conf")
+            config_bytes = base64.b64decode(data["config_b64"])
+            vpn_url = data.get("vpn_url")
+            if not vpn_url and config_bytes:
+                vpn_url = encode_vpn_url(config_bytes.decode("utf-8", errors="ignore"))
+        except Exception as e:
+            logger.error("invalid_vpnctl_output", server=server.slug, error=str(e))
+            raise RetryableProvisioningError(f"Malformed response from vpnctl: {e}") from e
+
+        return ProvisionedPeer(
+            external_id=peer_id,
+            label=label,
+            config_filename=filename,
+            config_bytes=config_bytes,
+            created_at=datetime.now(timezone.utc),
+            vpn_url=vpn_url,
+        )
+
+    async def disable_peer(self, *, server: VPNServer, peer_external_id: str) -> None:
+        await self._run_checked(
+            server, "provisioning_disable_peer_failed",
+            "disable-peer", "--peer-id", sanitize_identifier(peer_external_id),
+        )
+
+    async def remove_peer(self, *, server: VPNServer, peer_external_id: str) -> None:
+        await self._run_checked(
+            server, "provisioning_remove_peer_failed",
+            "remove-peer", "--peer-id", sanitize_identifier(peer_external_id),
+        )
+
+    async def get_peer_status(self, *, server: VPNServer, peer_external_id: str) -> PeerStatus:
+        exit_code, stdout, stderr = await self._vpnctl(
+            server, "peer-status", "--peer-id", sanitize_identifier(peer_external_id)
+        )
+        if exit_code != 0:
+            return PeerStatus(exists=False, is_active=False, raw_status=stderr.strip() or None)
+        try:
+            data = json.loads(stdout.strip())
+            return PeerStatus(
+                exists=data.get("exists", True),
+                is_active=data.get("is_active", False),
+                last_handshake=datetime.fromisoformat(data["last_handshake"]) if data.get("last_handshake") else None,
+                bytes_received=data.get("bytes_received", 0),
+                bytes_sent=data.get("bytes_sent", 0),
+                raw_status=stdout.strip(),
+            )
+        except Exception:
+            return PeerStatus(exists=True, is_active=False, raw_status=stdout.strip())
+
+    async def get_peer_config(self, *, server: VPNServer, peer_external_id: str) -> bytes:
+        exit_code, stdout, stderr = await self._vpnctl(
+            server, "get-config", "--peer-id", sanitize_identifier(peer_external_id)
+        )
+        if exit_code != 0:
+            raise self._classify_failure(exit_code, stdout, stderr)
+        return base64.b64decode(json.loads(stdout.strip())["config_b64"])
+
+
+class SSHCommandProvisioner(VpnctlProvisioner):
+    """
+    Runs vpnctl on the VPN host over SSH as the restricted vpn-provisioner user,
+    whose sudoers entry allows only /usr/local/sbin/vpnctl.
+    """
+
+    def __init__(self, connect_timeout: int = 15, command_timeout: int = 30, vpnctl_command: Optional[str] = None):
+        super().__init__(vpnctl_command)
         self.connect_timeout = connect_timeout
         self.command_timeout = command_timeout
 
@@ -114,9 +241,11 @@ class SSHCommandProvisioner(VPNProvisioner):
                     escaped_cmd,
                     timeout=self.command_timeout,
                 )
-                exit_code = stdout.channel.recv_exit_status()
+                # Read before waiting for the exit status so a large output can't fill
+                # the channel window and deadlock.
                 out_text = stdout.read().decode("utf-8")
                 err_text = stderr.read().decode("utf-8")
+                exit_code = stdout.channel.recv_exit_status()
                 return exit_code, out_text, err_text
             except (paramiko.SSHException, TimeoutError, OSError) as e:
                 logger.error("ssh_connection_error", server=server.slug, error=str(e))
@@ -126,143 +255,36 @@ class SSHCommandProvisioner(VPNProvisioner):
 
         return await asyncio.to_thread(_sync_ssh_run)
 
-    async def create_peer(
+
+class LocalCommandProvisioner(VpnctlProvisioner):
+    """
+    Runs vpnctl as a local process. Use it when the bot runs on the VPN host itself
+    (VPNCTL_COMMAND defaults to `sudo -n /usr/local/sbin/vpnctl`), or for development
+    against scripts/dev/sandbox.sh, which needs no VPS at all.
+    """
+
+    def __init__(self, command_timeout: int = 30, vpnctl_command: Optional[str] = None):
+        super().__init__(vpnctl_command)
+        self.command_timeout = command_timeout
+
+    async def _execute_remote_command(
         self,
         *,
         server: VPNServer,
-        subscription_id: uuid.UUID,
-        telegram_user_id: int,
-        device_name: str = "default",
-    ) -> ProvisionedPeer:
-        safe_sub_id = str(uuid.UUID(str(subscription_id)))
-        raw_label = f"user_{telegram_user_id}_{safe_sub_id[:8]}_{server.slug}"
-        safe_label = sanitize_identifier(raw_label)
-
-        cmd = [
-            "/usr/local/sbin/vpnctl",
-            "create-peer",
-            "--subscription-id",
-            safe_sub_id,
-            "--label",
-            safe_label,
-        ]
-
-        exit_code, stdout, stderr = await self._execute_remote_command(server=server, command_args=cmd)
-
-        if exit_code != 0:
-            err_msg = stderr.strip() or stdout.strip() or f"Command failed with exit code {exit_code}"
-            logger.error("provisioning_create_peer_failed", server=server.slug, error=err_msg)
-            if "already exists" in err_msg.lower() or "invalid" in err_msg.lower():
-                raise PermanentProvisioningError(err_msg)
-            raise RetryableProvisioningError(err_msg)
-
+        command_args: Sequence[str],
+    ) -> Tuple[int, str, str]:
         try:
-            data = json.loads(stdout.strip())
-            peer_id = sanitize_identifier(data["peer_id"])
-            label = sanitize_identifier(data.get("label", safe_label))
-            filename = data.get("filename", f"{label}.conf")
-            config_b64 = data["config_b64"]
-            config_bytes = base64.b64decode(config_b64)
-            vpn_url = data.get("vpn_url")
-            if not vpn_url and config_bytes:
-                vpn_url = encode_vpn_url(config_bytes.decode("utf-8", errors="ignore"))
-        except Exception as e:
-            logger.error("invalid_vpnctl_output", server=server.slug, stdout=stdout, error=str(e))
-            raise RetryableProvisioningError(f"Malformed response from remote vpnctl: {e}") from e
-
-        return ProvisionedPeer(
-            external_id=peer_id,
-            label=label,
-            config_filename=filename,
-            config_bytes=config_bytes,
-            created_at=datetime.now(timezone.utc),
-            vpn_url=vpn_url,
-        )
-
-    async def disable_peer(
-        self,
-        *,
-        server: VPNServer,
-        peer_external_id: str,
-    ) -> None:
-        safe_peer_id = sanitize_identifier(peer_external_id)
-        cmd = [
-            "/usr/local/sbin/vpnctl",
-            "disable-peer",
-            "--peer-id",
-            safe_peer_id,
-        ]
-        exit_code, stdout, stderr = await self._execute_remote_command(server=server, command_args=cmd)
-        if exit_code != 0:
-            err_msg = stderr.strip() or stdout.strip()
-            logger.error("provisioning_disable_peer_failed", server=server.slug, error=err_msg)
-            raise RetryableProvisioningError(err_msg)
-
-    async def remove_peer(
-        self,
-        *,
-        server: VPNServer,
-        peer_external_id: str,
-    ) -> None:
-        safe_peer_id = sanitize_identifier(peer_external_id)
-        cmd = [
-            "/usr/local/sbin/vpnctl",
-            "remove-peer",
-            "--peer-id",
-            safe_peer_id,
-        ]
-        exit_code, stdout, stderr = await self._execute_remote_command(server=server, command_args=cmd)
-        if exit_code != 0:
-            err_msg = stderr.strip() or stdout.strip()
-            logger.error("provisioning_remove_peer_failed", server=server.slug, error=err_msg)
-            raise RetryableProvisioningError(err_msg)
-
-    async def get_peer_status(
-        self,
-        *,
-        server: VPNServer,
-        peer_external_id: str,
-    ) -> PeerStatus:
-        safe_peer_id = sanitize_identifier(peer_external_id)
-        cmd = [
-            "/usr/local/sbin/vpnctl",
-            "peer-status",
-            "--peer-id",
-            safe_peer_id,
-        ]
-        exit_code, stdout, stderr = await self._execute_remote_command(server=server, command_args=cmd)
-        if exit_code != 0:
-            return PeerStatus(exists=False, is_active=False)
-
-        try:
-            data = json.loads(stdout.strip())
-            return PeerStatus(
-                exists=data.get("exists", True),
-                is_active=data.get("is_active", False),
-                last_handshake=datetime.fromisoformat(data["last_handshake"]) if data.get("last_handshake") else None,
-                bytes_received=data.get("bytes_received", 0),
-                bytes_sent=data.get("bytes_sent", 0),
-                raw_status=stdout.strip(),
+            proc = await asyncio.create_subprocess_exec(
+                *command_args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-        except Exception:
-            return PeerStatus(exists=True, is_active=True, raw_status=stdout.strip())
-
-    async def get_peer_config(
-        self,
-        *,
-        server: VPNServer,
-        peer_external_id: str,
-    ) -> bytes:
-        safe_peer_id = sanitize_identifier(peer_external_id)
-        cmd = [
-            "/usr/local/sbin/vpnctl",
-            "get-config",
-            "--peer-id",
-            safe_peer_id,
-        ]
-        exit_code, stdout, stderr = await self._execute_remote_command(server=server, command_args=cmd)
-        if exit_code != 0:
-            raise PermanentProvisioningError(f"Failed to fetch config: {stderr.strip()}")
-
-        data = json.loads(stdout.strip())
-        return base64.b64decode(data["config_b64"])
+        except OSError as e:
+            raise PermanentProvisioningError(f"Cannot run vpnctl ({command_args[0]}): {e}") from e
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=self.command_timeout)
+        except asyncio.TimeoutError as e:
+            proc.kill()
+            await proc.wait()
+            raise RetryableProvisioningError(f"vpnctl timed out after {self.command_timeout}s") from e
+        return proc.returncode, out.decode("utf-8"), err.decode("utf-8")

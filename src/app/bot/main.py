@@ -32,6 +32,8 @@ async def init_data(session_factory, settings):
                 country_name=s_cfg.display_name,
                 host=s_cfg.host,
                 ssh_port=s_cfg.port,
+                ssh_username=s_cfg.username,
+                provisioner_type=settings.PROVISIONER_MODE.value,
                 enabled=s_cfg.enabled,
                 max_active_subscriptions=s_cfg.max_active_subscriptions,
             )

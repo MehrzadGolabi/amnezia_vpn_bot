@@ -6,7 +6,7 @@ from aiogram.client.default import DefaultBotProperties
 from src.app.config.settings import ProvisionerMode, get_settings
 from src.app.db.session import get_session_factory
 from src.app.integrations.provisioning.mock_provisioner import MockProvisioner
-from src.app.integrations.provisioning.ssh_provisioner import SSHCommandProvisioner
+from src.app.integrations.provisioning.ssh_provisioner import LocalCommandProvisioner, SSHCommandProvisioner
 from src.app.utils.logging import get_logger, setup_logging
 from src.app.worker.engine import WorkerEngine
 
@@ -23,10 +23,13 @@ async def main():
     )
 
     if settings.PROVISIONER_MODE == ProvisionerMode.SSH:
-        provisioner = SSHCommandProvisioner()
+        provisioner = SSHCommandProvisioner(vpnctl_command=settings.VPNCTL_COMMAND)
+    elif settings.PROVISIONER_MODE == ProvisionerMode.LOCAL:
+        provisioner = LocalCommandProvisioner(vpnctl_command=settings.VPNCTL_COMMAND)
     else:
         provisioner = MockProvisioner()
 
+    logger.info("worker_provisioner", mode=settings.PROVISIONER_MODE.value)
     session_factory = get_session_factory(settings)
     engine = WorkerEngine(
         session_factory=session_factory,

@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class ProvisionerMode(str, Enum):
     MOCK = "mock"
     SSH = "ssh"
+    LOCAL = "local"
 
 
 class ServerConfig(BaseModel):
@@ -42,6 +43,8 @@ class Settings(BaseSettings):
     DATABASE_URL: SecretStr = SecretStr("postgresql+asyncpg://vpn_bot:vpn_bot@postgres:5432/vpn_bot")
 
     PROVISIONER_MODE: ProvisionerMode = ProvisionerMode.MOCK
+    # How vpnctl is invoked: on the VPN host over SSH (ssh mode) or as a local process (local mode).
+    VPNCTL_COMMAND: str = "sudo -n /usr/local/sbin/vpnctl"
     PROVISIONING_JOB_POLL_SECONDS: int = 5
     EXPIRY_CHECK_INTERVAL_SECONDS: int = 300
     REMINDER_DAYS_BEFORE_EXPIRY: Union[List[int], str] = Field(default_factory=lambda: [7, 3, 1])

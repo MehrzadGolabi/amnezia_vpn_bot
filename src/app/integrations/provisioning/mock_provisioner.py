@@ -40,26 +40,33 @@ class MockProvisioner(VPNProvisioner):
         psk = self._generate_key()
         server_pub_key = self._generate_key()
 
-        # Simulated AmneziaWG configuration format with obfuscation headers
+        # Simulated AmneziaWG 3.1 client config, shaped like what vpnctl produces
         config_content = (
             f"[Interface]\n"
-            f"Address = 10.8.0.{secrets.randbelow(200) + 2}/32\n"
             f"PrivateKey = {priv_key}\n"
-            f"DNS = 1.1.1.1, 8.8.8.8\n"
-            f"Jc = 4\n"
-            f"Jmin = 40\n"
-            f"Jmax = 70\n"
+            f"Address = 10.66.66.{secrets.randbelow(200) + 2}/32\n"
+            f"DNS = 1.1.1.1, 9.9.9.9\n"
+            f"MTU = 1280\n"
+            f"Jc = 6\n"
+            f"Jmin = 96\n"
+            f"Jmax = 512\n"
             f"S1 = 15\n"
-            f"S2 = 30\n"
+            f"S2 = 15\n"
+            f"S3 = 15\n"
+            f"S4 = 15\n"
             f"H1 = 1\n"
             f"H2 = 2\n"
             f"H3 = 3\n"
-            f"H4 = 4\n\n"
+            f"H4 = 4\n"
+            f"I1 = <r 64><t><rc 12>\n"
+            f"HeaderProtectionKey = {self._generate_key()}\n"
+            f"RandomTrailers = 1\n"
+            f"DisableCookies = 1\n\n"
             f"[Peer]\n"
             f"PublicKey = {server_pub_key}\n"
             f"PresharedKey = {psk}\n"
-            f"Endpoint = {server.host}:{server.ssh_port if server.ssh_port != 22 else 51820}\n"
             f"AllowedIPs = 0.0.0.0/0, ::/0\n"
+            f"Endpoint = {server.host}:51820\n"
             f"PersistentKeepalive = 25\n"
         )
         config_bytes = config_content.encode("utf-8")

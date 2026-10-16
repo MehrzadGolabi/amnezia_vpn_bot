@@ -11,24 +11,13 @@ sudo cp scripts/provisioner/vpnctl /usr/local/sbin/vpnctl
 sudo chmod 755 /usr/local/sbin/vpnctl
 ```
 
-### Step 2: Configure Server Interface Defaults
-Create `/etc/amnezia/vpnctl.conf`:
-```ini
-INTERFACE=awg0
-SERVER_HOST=203.0.113.10
-SERVER_PORT=51820
-SERVER_PUBKEY=YOUR_SERVER_PUBLIC_KEY
-SUBNET_PREFIX=10.8.0
-DNS_SERVERS=1.1.1.1,8.8.8.8
-JC=4
-JMIN=40
-JMAX=70
-S1=15
-S2=30
-H1=1
-H2=2
-H3=3
-H4=4
+### Step 2: Point `vpnctl` at the awg-quick interface
+Set up the native AmneziaWG 3.1 server first (`amneziawg-go` + `awg-quick@awg1`, per the migration guide). Then copy `scripts/provisioner/vpnctl.conf.example` to `/etc/amnezia/vpnctl.conf` (the installer in Step 3 does this) and check `INTERFACE` and `ENDPOINT_HOST`. Keys, port, subnet and all obfuscation values are read from `/etc/amnezia/amneziawg/awg1.conf`, so they never need copying.
+
+Check it works:
+```bash
+sudo vpnctl create-peer --subscription-id $(cat /proc/sys/kernel/random/uuid) --label smoke-test
+sudo vpnctl remove-peer --peer-id smoke-test
 ```
 
 ### Step 3: Create Dedicated Provisioner User & Sudoers Entry

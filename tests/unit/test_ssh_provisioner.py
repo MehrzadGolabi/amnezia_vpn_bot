@@ -69,10 +69,8 @@ async def test_ssh_provisioner_create_peer(sample_server):
         # Verify strict arguments passed
         mock_exec.assert_called_once()
         args = mock_exec.call_args[1]["command_args"]
-        assert args[0] == "/usr/local/sbin/vpnctl"
-        assert args[1] == "create-peer"
-        assert args[2] == "--subscription-id"
-        assert args[3] == str(sub_id)
+        assert args[:3] == ["sudo", "-n", "/usr/local/sbin/vpnctl"]
+        assert args[3:7] == ["create-peer", "--subscription-id", str(sub_id), "--label"]
 
 
 @pytest.mark.asyncio
@@ -86,13 +84,13 @@ async def test_ssh_provisioner_disable_and_remove(sample_server):
             server=sample_server,
             peer_external_id="peer_abc",
         )
-        assert mock_exec.call_args[1]["command_args"][1] == "disable-peer"
+        assert mock_exec.call_args[1]["command_args"][3] == "disable-peer"
 
         await provisioner.remove_peer(
             server=sample_server,
             peer_external_id="peer_abc",
         )
-        assert mock_exec.call_args[1]["command_args"][1] == "remove-peer"
+        assert mock_exec.call_args[1]["command_args"][3] == "remove-peer"
 
 
 @pytest.mark.asyncio
@@ -149,7 +147,7 @@ async def test_ssh_provisioner_permanent_error(sample_server):
     provisioner = SSHCommandProvisioner()
 
     with patch.object(provisioner, "_execute_remote_command", new_callable=AsyncMock) as mock_exec:
-        mock_exec.return_value = (1, "", "Peer already exists")
+        mock_exec.return_value = (2, "", "Error: Invalid label: 'x y'")
         with pytest.raises(PermanentProvisioningError):
             await provisioner.create_peer(
                 server=sample_server,
@@ -185,3 +183,12 @@ async def test_ssh_provisioner_sync_run_mocked_paramiko(sample_server):
         assert "ok" in out
         mock_client.connect.assert_called_once()
         mock_client.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ssh_provisioner_custom_vpnctl_command(sample_server):
+    provisioner = SSHCommandProvisioner(vpnctl_command="/opt/vpnctl")
+    with patch.object(provisioner, "_execute_remote_command", new_callable=AsyncMock) as mock_exec:
+        mock_exec.return_value = (0, json.dumps({"status": "success"}), "")
+        await provisioner.disable_peer(server=sample_server, peer_external_id="peer_abc")
+        assert mock_exec.call_args[1]["command_args"] == ["/opt/vpnctl", "disable-peer", "--peer-id", "peer_abc"]

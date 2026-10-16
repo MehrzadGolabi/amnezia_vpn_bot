@@ -86,7 +86,8 @@ VPN_SERVER_TR_1_MAX_ACTIVE_SUBSCRIPTIONS=100
 
 | Variable | Required | Default | Description & Instructions |
 |---|---|---|---|
-| `PROVISIONER_MODE` | No | `mock` | Set to `mock` for local/offline testing without real VPN servers. Set to `ssh` for live production provisioning over SSH. |
+| `PROVISIONER_MODE` | No | `mock` | `mock` fakes configs for UI testing. `ssh` runs `vpnctl` on each server over SSH (Docker deployment). `local` runs `vpnctl` on this machine: either the bot lives on the VPN host, or you're testing against `scripts/dev/sandbox.sh`. |
+| `VPNCTL_COMMAND` | No | `sudo -n /usr/local/sbin/vpnctl` | How `vpnctl` is invoked, on the remote host (`ssh`) or locally (`local`). The sandbox script prints the value to use for testing. |
 | `PROVISIONING_JOB_POLL_SECONDS` | No | `5` | Polling frequency (seconds) for the background Outbox worker to pick up and process new peer provisioning jobs. |
 | `EXPIRY_CHECK_INTERVAL_SECONDS` | No | `300` | Frequency (seconds) for the scheduler daemon to check for expiring subscriptions. |
 | `REMINDER_DAYS_BEFORE_EXPIRY` | No | `7,3,1` | Tiered reminder intervals (in days before expiration) when renewal reminders are sent to users. |

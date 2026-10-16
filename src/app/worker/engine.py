@@ -1,16 +1,13 @@
 import asyncio
-import io
 import uuid
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.config.settings import Settings, get_settings
 from src.app.db.models.audit import ActorType
 from src.app.db.models.job import JobStatus, JobType, ProvisioningJob
-from src.app.db.models.order import Order, OrderStatus
-from src.app.db.models.subscription import Subscription, SubscriptionStatus
+from src.app.db.models.order import OrderStatus
 from src.app.db.repositories.audit_repo import AuditRepository
 from src.app.db.repositories.job_repo import JobRepository
 from src.app.db.repositories.order_repo import OrderRepository
@@ -18,12 +15,9 @@ from src.app.db.repositories.server_repo import ServerRepository
 from src.app.db.repositories.subscription_repo import SubscriptionRepository
 from src.app.db.repositories.user_repo import UserRepository
 from src.app.integrations.provisioning.base import VPNProvisioner
-from src.app.integrations.provisioning.mock_provisioner import MockProvisioner
 from src.app.integrations.provisioning.ssh_provisioner import (
     PermanentProvisioningError,
-    ProvisioningError,
     RetryableProvisioningError,
-    SSHCommandProvisioner,
 )
 from src.app.utils.amnezia_codec import encode_vpn_url
 from src.app.utils.logging import get_logger
@@ -58,21 +52,31 @@ class WorkerEngine:
             jobs = await job_repo.claim_pending_jobs(worker_id=self.worker_id, limit=limit)
             if not jobs:
                 return 0
+            # Commit the claim now, so a failure in one job can't roll back the others' locks.
+            job_ids = [job.id for job in jobs]
+            await session.commit()
 
-            for job in jobs:
+            for job_id in job_ids:
+                job = await job_repo.get_by_id(job_id)
                 try:
                     await self._process_job(session, job)
-                    await job_repo.mark_completed(job.id)
+                    await job_repo.mark_completed(job_id)
                     await session.commit()
-                except PermanentProvisioningError as e:
-                    logger.error("permanent_job_failure", job_id=str(job.id), error=str(e))
-                    await job_repo.mark_failed(job.id, str(e), is_retryable=False)
-                    await session.commit()
-                    await self._alert_admin(f"🚨 Permanent Provisioning Failure on Job {job.id}:\n{e}")
                 except Exception as e:
-                    logger.warning("retryable_job_failure", job_id=str(job.id), error=str(e))
-                    await job_repo.mark_failed(job.id, str(e), is_retryable=True)
+                    # Drop whatever the failed job half-wrote before recording the failure.
+                    await session.rollback()
+                    permanent = isinstance(e, PermanentProvisioningError)
+                    if permanent:
+                        logger.error("permanent_job_failure", job_id=str(job_id), error=str(e))
+                    else:
+                        logger.warning("retryable_job_failure", job_id=str(job_id), error=str(e))
+                    failed = await job_repo.mark_failed(job_id, str(e), is_retryable=not permanent)
                     await session.commit()
+                    if failed and failed.status == JobStatus.PERMANENT_FAILURE:
+                        await self._alert_admin(
+                            f"🚨 Provisioning job {failed.job_type} {job_id} failed for good "
+                            f"after {failed.attempt_count} attempt(s):\n{e}"
+                        )
 
             return len(jobs)
         finally:
@@ -122,24 +126,21 @@ class WorkerEngine:
 
             # Deliver config file document to user
             expiry_str = sub.expires_at.strftime("%Y-%m-%d %H:%M UTC")
-            doc = BufferedInputFile(peer.config_bytes, filename=peer.config_filename)
-            vpn_link = f"\n\n🔗 <b>One-Click Amnezia Key:</b>\n<code>{peer.vpn_url}</code>" if peer.vpn_url else ""
             caption = (
                 f"✅ <b>Your VPN is Ready!</b>\n\n"
                 f"📍 <b>Location:</b> {server.display_name}\n"
-                f"⏳ <b>Expires:</b> <code>{expiry_str}</code>{vpn_link}\n\n"
-                f"📥 <i>Import the attached configuration file or copy the one-click key above into <b>AmneziaVPN</b>.</i>"
+                f"⏳ <b>Expires:</b> <code>{expiry_str}</code>\n\n"
+                f"📥 <i>Import this file into <b>AmneziaWG 3.1+</b> or <b>AmneziaVPN 5.0+</b>.</i>"
             )
-
-            try:
-                await self.bot.send_document(
-                    chat_id=user.telegram_user_id,
-                    document=doc,
-                    caption=caption,
-                    parse_mode="HTML",
+            delivered = await self._deliver_config(
+                user.telegram_user_id, peer.config_bytes, peer.config_filename, caption, peer.vpn_url
+            )
+            sub.config_delivery_status = "delivered" if delivered else "failed"
+            if not delivered:
+                await self._alert_admin(
+                    f"⚠️ Peer {peer.external_id} was created but its config could not be sent to "
+                    f"user {user.telegram_user_id}. They can use Redeliver in their subscription menu."
                 )
-            except Exception as e:
-                logger.error("failed_to_send_config_document", user_id=user.telegram_user_id, error=str(e))
 
         elif job.job_type == JobType.DISABLE_PEER:
             sub = await sub_repo.get_by_id(job.aggregate_id)
@@ -177,21 +178,50 @@ class WorkerEngine:
                 if server and user:
                     config_bytes = await self.provisioner.get_peer_config(server=server, peer_external_id=sub.peer_external_id)
                     filename = f"{sub.peer_label or 'amneziawg'}.conf"
-                    doc = BufferedInputFile(config_bytes, filename=filename)
                     conf_str = config_bytes.decode("utf-8", errors="ignore")
-                    v_url = encode_vpn_url(conf_str) if conf_str else ""
-                    v_link = f"\n\n🔗 <b>One-Click Amnezia Key:</b>\n<code>{v_url}</code>" if v_url else ""
                     caption = (
-                        f"🔄 <b>Config Redelivery</b> for {server.display_name}{v_link}\n\n"
-                        f"📥 <i>Import the attached configuration file or copy the one-click key above into <b>AmneziaVPN</b>.</i>"
+                        f"🔄 <b>Config Redelivery</b> for {server.display_name}\n\n"
+                        f"📥 <i>Import this file into <b>AmneziaWG 3.1+</b> or <b>AmneziaVPN 5.0+</b>.</i>"
                     )
-                    await self.bot.send_document(
-                        chat_id=user.telegram_user_id,
-                        document=doc,
-                        caption=caption,
-                        parse_mode="HTML",
+                    delivered = await self._deliver_config(
+                        user.telegram_user_id, config_bytes, filename, caption,
+                        encode_vpn_url(conf_str) if conf_str else None,
                     )
+                    if not delivered:
+                        raise RetryableProvisioningError(f"Could not send config to user {user.telegram_user_id}")
+                    sub.config_delivery_status = "delivered"
                     await sub_repo.increment_redelivery_count(sub.id)
+
+    async def _deliver_config(
+        self,
+        chat_id: int,
+        config_bytes: bytes,
+        filename: str,
+        caption: str,
+        vpn_url: Optional[str],
+    ) -> bool:
+        """Send the .conf file, then the vpn:// key as its own message.
+        AWG 3.1 keys are too long for Telegram's 1024-character caption limit."""
+        try:
+            await self.bot.send_document(
+                chat_id=chat_id,
+                document=BufferedInputFile(config_bytes, filename=filename),
+                caption=caption,
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error("failed_to_send_config_document", user_id=chat_id, error=str(e))
+            return False
+        if vpn_url:
+            try:
+                await self.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🔗 <b>One-click key for AmneziaVPN:</b>\n<code>{vpn_url}</code>",
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.warning("failed_to_send_vpn_url", user_id=chat_id, error=str(e))
+        return True
 
     async def _alert_admin(self, message: str) -> None:
         if self.admin_chat_id:
