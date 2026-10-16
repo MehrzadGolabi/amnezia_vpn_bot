@@ -81,6 +81,8 @@ sudo install -m 755 scripts/provisioner/vpnctl /usr/local/sbin/vpnctl
 sudo systemctl restart vpnbot-bot vpnbot-worker vpnbot-scheduler
 ```
 
+On each extra VPN host, update `vpnctl` the same way: `git pull` in `/opt/amnezia_vpn_bot`, then the `install` line.
+
 With Docker, run `git pull`, then `docker compose up -d --build`. Copy the new `vpnctl` to each VPN host as well.
 
 ## Troubleshooting
@@ -91,4 +93,5 @@ With Docker, run `git pull`, then `docker compose up -d --build`. Copy the new `
 | `sudo: a password is required` | `/etc/sudoers.d/vpn-provisioner` is missing, or the service isn't running as `vpn-provisioner`. |
 | `Unable to modify interface` | `awg-quick@awg1` is down. Start it, and the worker retries on its own. |
 | Client gets no handshake | Make sure the client app is 3.1 (AmneziaWG 3.1.x, AmneziaVPN 5.0.2.1+). Check `ENDPOINT_HOST` in `vpnctl.conf` and that ufw allows the port. |
+| `SSH connection failed to <server>` | Run the `ssh` test from [More servers](NATIVE_SETUP.md#more-servers) as `vpn-provisioner` on the bot host. Check the Tailscale IP and `authorized_keys`. |
 | `database is locked` | Something else is holding the SQLite file, such as an open `sqlite3` shell. Close it. |

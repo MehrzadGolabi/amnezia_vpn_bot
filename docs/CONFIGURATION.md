@@ -21,7 +21,7 @@ All settings live in `.env` in the repository root. Start from `.env.example`.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `PROVISIONER_MODE` | `mock` | `local` runs `vpnctl` on this machine (no Docker). `ssh` runs it on each server over SSH (Docker). `mock` makes fake configs, for trying the bot without a server. |
+| `PROVISIONER_MODE` | `mock` | `local` runs `vpnctl` on this machine for servers without a `HOST`, and over SSH for servers with one (no Docker). `ssh` runs it on every server over SSH (Docker). `mock` makes fake configs, for trying the bot without a server. |
 | `VPNCTL_COMMAND` | `sudo -n /usr/local/sbin/vpnctl` | How `vpnctl` is called. Change it only for the test sandbox. |
 | `PROVISIONING_JOB_POLL_SECONDS` | `5` | How often the worker checks for new jobs. |
 
@@ -46,11 +46,11 @@ Each location customers can buy is a group of `VPN_SERVER_<NAME>_*` settings. `<
 | `VPN_SERVER_<NAME>_COUNTRY_CODE` | | Two-letter code, such as `DE`. |
 | `VPN_SERVER_<NAME>_ENABLED` | `true` | `false` hides it from new orders. |
 | `VPN_SERVER_<NAME>_MAX_ACTIVE_SUBSCRIPTIONS` | none | Capacity shown in `/servers`. It is displayed only and does not stop sales. |
-| `VPN_SERVER_<NAME>_HOST` | `localhost` | SSH host. Only used with `ssh` mode. |
+| `VPN_SERVER_<NAME>_HOST` | `localhost` | SSH host. In `local` mode, leave it out (or `localhost`) for the bot's own server. |
 | `VPN_SERVER_<NAME>_PORT` | `22` | SSH port. |
 | `VPN_SERVER_<NAME>_USERNAME` | `vpn-provisioner` | SSH user. |
 | `VPN_SERVER_<NAME>_SSH_PRIVATE_KEY_PATH` | | SSH key, for example `/app/secrets/id_ed25519` in Docker. |
-| `VPN_SERVER_<NAME>_SSH_KNOWN_HOSTS_PATH` | | If set, the host key is checked against this file. If not, any host key is accepted. |
+| `VPN_SERVER_<NAME>_SSH_KNOWN_HOSTS_PATH` | | If set, the host key is checked against this file, for example `/home/vpn-provisioner/.ssh/known_hosts`. If not, any host key is accepted. |
 
 The server-side settings (endpoint, DNS, MTU) are in `/etc/amnezia/vpnctl.conf` on the VPN host. See [vpnctl](VPNCTL.md).
 

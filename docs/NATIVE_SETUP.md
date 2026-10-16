@@ -1,17 +1,19 @@
 # Running the bot without Docker
 
-The bot, worker and scheduler run as systemd services on the VPN host. The worker calls `vpnctl` locally through sudo, and the database is one SQLite file. Nothing goes over SSH.
+The bot, worker and scheduler run as systemd services on one VPN host. The worker runs `vpnctl` on that host through sudo, and reaches any other VPN hosts over SSH. The database is one SQLite file.
 
-Before you start, `awg-quick@awg1` must be running and `awg --version` must show `v3.1.x`.
+Run one bot only. A Telegram bot token can be used by one running bot at a time, so other servers are added to this bot (see [More servers](#more-servers)) instead of getting a bot of their own.
+
+Before you start, `awg-quick@awg1` must be running and `awg --version` must show `v3.1.x`. Commands below are run as root.
 
 ## 1. Code and dependencies
 
 ```bash
-sudo apt install -y python3-venv git
-sudo git clone https://github.com/MehrzadGolabi/amnezia_vpn_bot /opt/amnezia_vpn_bot
+apt install -y python3-venv git
+git clone https://github.com/MehrzadGolabi/amnezia_vpn_bot /opt/amnezia_vpn_bot
 cd /opt/amnezia_vpn_bot
-sudo python3 -m venv .venv
-sudo .venv/bin/pip install .
+python3 -m venv .venv
+.venv/bin/pip install .
 ```
 
 The services expect the venv at `/opt/amnezia_vpn_bot/.venv`.
@@ -19,32 +21,32 @@ The services expect the venv at `/opt/amnezia_vpn_bot/.venv`.
 ## 2. vpnctl and the service user
 
 ```bash
-sudo ./scripts/provisioner/install-provisioner.sh
-sudo nano /etc/amnezia/vpnctl.conf        # set ENDPOINT_HOST to the server's public IP or hostname
+./scripts/provisioner/install-provisioner.sh
+nano /etc/amnezia/vpnctl.conf        # set ENDPOINT_HOST to this server's public IP or hostname
 ```
 
-The installer adds `/usr/local/sbin/vpnctl`, `/etc/amnezia/vpnctl.conf`, the `vpn-provisioner` user, and a sudoers rule that lets that user run only `vpnctl`. The services run as `vpn-provisioner`.
+The installer adds `/usr/local/sbin/vpnctl`, `/etc/amnezia/vpnctl.conf`, the `vpn-provisioner` user, and a sudoers rule that lets that user run only `vpnctl`. The services run as `vpn-provisioner`. Running the installer again is safe and keeps your `vpnctl.conf`.
 
 Check that it works:
 
 ```bash
 sudo -u vpn-provisioner sudo -n /usr/local/sbin/vpnctl create-peer \
     --subscription-id $(cat /proc/sys/kernel/random/uuid) --label smoke-test
-sudo cat /etc/amnezia/amneziawg/clients/smoke-test.conf    # import into a 3.1 app and connect
+cat /etc/amnezia/amneziawg/clients/smoke-test.conf    # import into a 3.1 app and connect
 sudo -u vpn-provisioner sudo -n /usr/local/sbin/vpnctl remove-peer --peer-id smoke-test
 ```
 
 ## 3. `.env`
 
 ```bash
-sudo cp .env.example .env
-sudo mkdir -p data
-sudo nano .env
+cp .env.example .env
+nano .env
 ```
 
-Change these lines. The `POSTGRES_*` lines are only for Docker and can stay or go.
+Set these:
 
 ```ini
+APP_ENV=production
 TELEGRAM_BOT_TOKEN=<from @BotFather>
 ADMIN_TELEGRAM_IDS=<your Telegram user ID>
 ADMIN_CHAT_ID=<your user ID, or a group ID for receipts>
@@ -52,30 +54,93 @@ DATABASE_URL=sqlite+aiosqlite:////opt/amnezia_vpn_bot/data/bot.db
 PROVISIONER_MODE=local
 PAYMENT_INSTRUCTIONS_EN=...
 PAYMENT_INSTRUCTIONS_FA=...
-VPN_SERVER_MAIN_1_DISPLAY_NAME=Germany
-VPN_SERVER_MAIN_1_COUNTRY_CODE=DE
 ```
 
-Every setting is described in [Configuration](CONFIGURATION.md).
+At the bottom, keep one server group for this host. Leave out `HOST`, so `vpnctl` runs locally:
+
+```ini
+VPN_SERVER_MAIN_1_SLUG=main-1
+VPN_SERVER_MAIN_1_COUNTRY_CODE=DE
+VPN_SERVER_MAIN_1_DISPLAY_NAME=Germany
+VPN_SERVER_MAIN_1_ENABLED=true
+```
+
+Delete any other `VPN_SERVER_*` lines, such as example groups from an older `.env`. Each group is shown to customers as a location. The `POSTGRES_*` lines are only for Docker and can stay. Every setting is described in [Configuration](CONFIGURATION.md).
+
+Keep the token private. If it is ever posted somewhere, run `/revoke` in @BotFather and put the new one in `.env`.
 
 ```bash
-sudo chown -R vpn-provisioner:vpn-provisioner /opt/amnezia_vpn_bot
-sudo chmod 600 .env
+mkdir -p data
+chown -R vpn-provisioner:vpn-provisioner /opt/amnezia_vpn_bot
+chmod 600 .env
 ```
 
 ## 4. Start
 
 ```bash
-sudo cp deploy/systemd/vpnbot-*.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now vpnbot-bot vpnbot-worker vpnbot-scheduler
+cp deploy/systemd/vpnbot-*.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now vpnbot-bot vpnbot-worker vpnbot-scheduler
 journalctl -u vpnbot-bot -u vpnbot-worker -u vpnbot-scheduler -f
 ```
 
 `vpnbot-bot` creates the database tables on first start, along with three default plans (1, 3 and 6 months, in EUR). To test the whole flow, send `/start` to the bot, place an order, and approve it from the admin chat. The config should arrive within a few seconds.
 
+## More servers
+
+Each extra VPN host needs AmneziaWG and `vpnctl`, but not the bot. The bot host reaches it over SSH as `vpn-provisioner`. Use the host's Tailscale IP so SSH does not have to be open to the internet.
+
+On the new server, with `awg-quick@awg1` running:
+
+```bash
+apt install -y git
+git clone https://github.com/MehrzadGolabi/amnezia_vpn_bot /opt/amnezia_vpn_bot
+cd /opt/amnezia_vpn_bot
+./scripts/provisioner/install-provisioner.sh
+nano /etc/amnezia/vpnctl.conf        # ENDPOINT_HOST = this server's public IP
+```
+
+Run the smoke test from step 2 there as well.
+
+On the bot host, create an SSH key for `vpn-provisioner` once:
+
+```bash
+sudo -u vpn-provisioner ssh-keygen -t ed25519 -N '' -f /home/vpn-provisioner/.ssh/id_ed25519
+cat /home/vpn-provisioner/.ssh/id_ed25519.pub
+```
+
+On the new server, add that public key:
+
+```bash
+echo '<the public key>' >> /home/vpn-provisioner/.ssh/authorized_keys
+```
+
+Back on the bot host, connect once. This saves the server's host key and checks that `vpnctl` runs. The output should be JSON with `"exists": false`.
+
+```bash
+sudo -u vpn-provisioner ssh vpn-provisioner@<tailscale IP> sudo -n /usr/local/sbin/vpnctl peer-status --peer-id test
+```
+
+Add a server group to `.env` and restart:
+
+```ini
+VPN_SERVER_TR_1_SLUG=tr-1
+VPN_SERVER_TR_1_COUNTRY_CODE=TR
+VPN_SERVER_TR_1_DISPLAY_NAME=Turkey
+VPN_SERVER_TR_1_ENABLED=true
+VPN_SERVER_TR_1_HOST=<tailscale IP>
+VPN_SERVER_TR_1_SSH_PRIVATE_KEY_PATH=/home/vpn-provisioner/.ssh/id_ed25519
+VPN_SERVER_TR_1_SSH_KNOWN_HOSTS_PATH=/home/vpn-provisioner/.ssh/known_hosts
+```
+
+```bash
+systemctl restart vpnbot-bot vpnbot-worker vpnbot-scheduler
+```
+
+Customers now see both locations. To stop selling a location without touching existing customers, set its `ENABLED=false` and restart.
+
 ## Your own clients
 
-Keep using `awg-add-client.sh` and `awg-del-client.sh` for clients you don't sell. They work alongside the bot (see [vpnctl](VPNCTL.md#files)). Avoid names starting with `user_`, which the bot uses.
+Keep using `awg-add-client.sh` and `awg-del-client.sh` for clients you don't sell, on any server. They work alongside the bot (see [vpnctl](VPNCTL.md#files)). Avoid names starting with `user_`, which the bot uses.
 
 For updates, backups and changing plans, see [Operations](OPERATIONS.md).

@@ -120,3 +120,19 @@ async def test_worker_provisions_and_expires_on_sandbox(awg_sandbox, session):
     assert awg_sandbox.live_peers() == {}
     assert f"# {sub.peer_external_id}" not in awg_sandbox.server_conf.read_text()
     assert list(awg_sandbox.clients.iterdir()) == []
+
+
+async def test_local_mode_reaches_other_hosts_over_ssh(awg_sandbox, server):
+    prov = LocalCommandProvisioner(vpnctl_command=awg_sandbox.vpnctl_command)
+    prov._ssh._execute_remote_command = AsyncMock(return_value=(0, '{"peers": []}', ""))
+    remote = VPNServer(slug="tr-1", display_name="Turkey", country_code="TR", host="100.64.0.2")
+
+    await prov._vpnctl(remote, "peer-status", "--peer-id", "x")
+    prov._ssh._execute_remote_command.assert_awaited_once()
+    assert prov._ssh._execute_remote_command.await_args.kwargs["server"] is remote
+
+    # The server with no remote HOST still runs vpnctl on this machine.
+    prov._ssh._execute_remote_command.reset_mock()
+    await prov.create_peer(server=server, subscription_id=uuid.uuid4(), telegram_user_id=7)
+    prov._ssh._execute_remote_command.assert_not_awaited()
+    assert len(awg_sandbox.live_peers()) == 1
