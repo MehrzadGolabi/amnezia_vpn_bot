@@ -1,76 +1,44 @@
-# Architecture & Technical Design
-
-## 1. High-Level Architecture Overview
-
-The AmneziaWG Telegram Sales & Subscription Bot is designed as a decoupled, multi-process architecture consisting of three dedicated containerized daemons and an outbox pattern for fault-tolerant background provisioning:
+# Architecture
 
 ```
-                  +----------------------------------------------+
-                  |               Telegram Clients               |
-                  +----------------------+-----------------------+
-                                         |
-                                         v
-                  +----------------------------------------------+
-                  |               Bot Daemon (AIOGram 3)         |
-                  |  - Bilingual Menus (EN/FA)                   |
-                  |  - Catalog & Order FSM                       |
-                  |  - Receipt Submissions                       |
-                  |  - Customer Support Ticket Bridge            |
-                  |  - Admin Dashboard & Approvals               |
-                  +----------------------+-----------------------+
-                                         |
-                                         v
-                  +----------------------------------------------+
-                  |               PostgreSQL 16                  |
-                  |  - Orders & Subscriptions (State Machines)   |
-                  |  - Transactional Outbox (Jobs Queue)         |
-                  |  - Tickets & Messages                        |
-                  |  - Notifications & Audit Log                 |
-                  +-----------+----------------------+-----------+
-                              ^                      ^
-                              |                      |
-            +-----------------+                      +-----------------+
-            |                                                          |
-+-----------+------------------+                   +-------------------+--------------------+
-|  Outbox Worker Engine        |                   |  Scheduler Lifecycle Daemon            |
-|  - Idempotent Job Processing |                   |  - Expiry Reminders (7d, 3d, 1d)       |
-|  - SSH Command Provisioner   |                   |  - Automatic Peer Disabling on Expiry  |
-|  - In-Memory Config Delivery |                   |  - Grace-Period Peer Removal           |
-|  - Exponential Backoff       |                   +----------------------------------------+
-+-----------+------------------+
-            | SSH (Port 22, Non-Root `vpn-provisioner`)
-            v
-+------------------------------+
-|  Remote VPN Server Nodes     |
-|  - `/usr/local/sbin/vpnctl`  |
-|  - AmneziaWG Interface       |
-+------------------------------+
+Telegram  <-->  bot  ----writes---->  database  <----reads/writes----  scheduler
+                                        ^   |
+                                        |   v
+                                       worker  --(local sudo or SSH)-->  vpnctl  -->  awg1.conf, awg set
 ```
 
----
+- **bot** (`src/app/bot`) is the aiogram interface. Customers order, upload receipts, read their subscriptions and open tickets. Admins approve, reject and manage things.
+- **worker** (`src/app/worker`) runs provisioning jobs from the `provisioning_jobs` table: create, disable and remove peers, and resend configs.
+- **scheduler** (`src/app/scheduler`) sends expiry reminders, and queues disable jobs at expiry and remove jobs after the grace period.
+- **vpnctl** (`scripts/provisioner/vpnctl`) is the only code that changes the VPN server. See [vpnctl](VPNCTL.md).
 
-## 2. Key Subsystems & Design Patterns
+The database is SQLite without Docker, or Postgres with Docker. Migrations live in `src/app/db/migrations`.
 
-### 2.1 Transactional Outbox Pattern
-When an administrator approves an order or when a peer status changes, the database state mutation (`subscriptions`, `orders`) and the provisioning task (`provisioning_jobs`) are committed atomically within a single SQL transaction.
-- The `WorkerEngine` polls for pending jobs using row locking (`FOR UPDATE SKIP LOCKED`).
-- If an SSH error or network hiccup occurs, the job state is updated with exponential backoff (`next_retry_at = now + 2^attempts * 15s`).
-- Permanent errors trigger administrative alerts without hanging the worker process.
+## Job queue
 
-### 2.2 Security Architecture & Zero-Root Principle
-- **Zero Root in Bot Container**: The bot daemon and worker run inside non-root container environments as `appuser` (UID 1000).
-- **Dedicated VPN Provisioner User**: On remote VPN servers, SSH access is strictly limited to the `vpn-provisioner` system account using dedicated SSH public keys.
-- **Sudoers Whitelist**: The `vpn-provisioner` user only has sudo permission to execute `/usr/local/sbin/vpnctl` with no other privileged system access.
-- **Paramiko Parameter Sanitization**: All peer identifiers and labels are strictly validated against `^[a-zA-Z0-9_-]{1,64}$` before SSH execution, preventing command injection.
+Approving an order creates the subscription and its `create_peer` job in one transaction, so an approval never loses its job.
 
-### 2.3 Ephemeral Configuration Delivery
-- AmneziaWG configuration files (`.conf`) and `.vpn` profiles are generated and transmitted **in-memory as private Telegram document attachments**.
-- Plaintext configuration files and private keys are **never stored plaintext in PostgreSQL**, eliminating data leak risks if the database backup is compromised.
+The worker polls every `PROVISIONING_JOB_POLL_SECONDS`. It claims a batch and commits the claim, then runs each job in its own transaction:
 
-### 2.4 State Machines
+- On success, the job is marked `succeeded`.
+- On an error, the job's partial changes are rolled back and the job is retried, after 10 s, 30 s, 90 s and then 270 s. It's marked `permanent_failure` after 5 attempts, or immediately if `vpnctl` says the input is bad or the client doesn't exist. The admin chat gets an alert.
+- A job left in `processing` for more than 5 minutes (for example, after a crash) is picked up again.
 
-#### Order Lifecycle:
-`DRAFT` -> `AWAITING_RECEIPT` -> `RECEIPT_SUBMITTED` -> `PROVISIONING` -> `FULFILLED` (or `REJECTED` / `CANCELLED`)
+Jobs are safe to repeat. `create-peer` with an existing label returns the existing client, and disable and remove succeed when there's nothing left to do. The scheduler doesn't queue a job if the same one is already pending.
 
-#### Subscription Lifecycle:
-`PROVISIONING` -> `ACTIVE` -> `EXPIRED` -> `DISABLED` -> `REVOKED`
+The worker assumes it is the only worker running. Claims don't lock rows, so don't start two workers.
+
+## States
+
+Order: `awaiting_receipt` -> `receipt_submitted` -> `provisioning` -> `fulfilled`, or `rejected`.
+
+Subscription: `provisioning` -> `active` -> `disabled` (expired, peer off) -> `expired` (peer deleted).
+
+## Security
+
+- Client private keys and configs live only on the VPN server, in `/etc/amnezia/amneziawg/clients/`, readable by root only. The database stores the client name, not the keys.
+- The bot processes never run as root. `vpn-provisioner` can run only `vpnctl`, and only with the subcommands listed in `sudoers.example`.
+- `vpnctl` checks every argument: names must match `^[a-zA-Z0-9_-]{1,64}$`, and subscription IDs must be UUIDs. The SSH provisioner checks names too, and quotes every argument.
+- With Docker, the SSH key is mounted read-only. Set `SSH_KNOWN_HOSTS_PATH` to have the host key checked. Without it, any host key is accepted.
+- Logs redact bot tokens, passwords and private keys.
+- `ThrottlingMiddleware` drops messages sent less than 0.5 s apart by the same user. `/block` suspends a user.

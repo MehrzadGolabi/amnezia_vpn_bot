@@ -1,96 +1,94 @@
-# Operations & Maintenance Guide
+# Operations
 
-## 1. Remote VPN Host Setup
+## Admin commands
 
-To prepare a new Linux VPS host for AmneziaWG provisioning:
+Send these to the bot from an account listed in `ADMIN_TELEGRAM_IDS`.
 
-### Step 1: Install `vpnctl`
-Copy `scripts/provisioner/vpnctl` to `/usr/local/sbin/vpnctl` on the host:
+| Command | What it does |
+|---|---|
+| `/admin` | Shows pending receipts and open tickets. |
+| `/servers` | Shows each server's active subscriptions, and lets you turn a server on or off for new orders. |
+| `/products` | Lists the plans. |
+| `/user <telegram_id>` | Shows a customer and how many subscriptions they have. |
+| `/block <telegram_id>`, `/unblock <telegram_id>` | Suspends or restores a customer. |
+
+Receipts arrive in `ADMIN_CHAT_ID` with Approve and Reject buttons. Approving queues a job, and the worker creates the client and sends the config.
+
+Turning a server off in `/servers` lasts until the bot restarts. On startup the bot reloads servers from `.env`, so use `VPN_SERVER_<NAME>_ENABLED=false` to turn one off permanently.
+
+## Subscription lifecycle
+
+1. The admin approves the order, and the worker creates the client and sends the `.conf` file and a `vpn://` key.
+2. Reminders go out `REMINDER_DAYS_BEFORE_EXPIRY` days before expiry.
+3. At expiry, the scheduler queues a disable job. The client is removed from `awg1.conf` and the interface, but its files are kept.
+4. After `PEER_REMOVAL_GRACE_DAYS`, the client is deleted.
+
+Renewing is a new order with a new config. It does not extend the old one.
+
+## Logs
+
+Without Docker:
+
 ```bash
-sudo cp scripts/provisioner/vpnctl /usr/local/sbin/vpnctl
-sudo chmod 755 /usr/local/sbin/vpnctl
+journalctl -u vpnbot-bot -u vpnbot-worker -u vpnbot-scheduler -f
 ```
 
-### Step 2: Point `vpnctl` at the awg-quick interface
-Set up the native AmneziaWG 3.1 server first (`amneziawg-go` + `awg-quick@awg1`, per the migration guide). Then copy `scripts/provisioner/vpnctl.conf.example` to `/etc/amnezia/vpnctl.conf` (the installer in Step 3 does this) and check `INTERFACE` and `ENDPOINT_HOST`. Keys, port, subnet and all obfuscation values are read from `/etc/amnezia/amneziawg/awg1.conf`, so they never need copying.
+With Docker:
 
-Check it works:
 ```bash
-sudo vpnctl create-peer --subscription-id $(cat /proc/sys/kernel/random/uuid) --label smoke-test
-sudo vpnctl remove-peer --peer-id smoke-test
-```
-
-### Step 3: Create Dedicated Provisioner User & Sudoers Entry
-Execute the automated installer script:
-```bash
-sudo ./scripts/provisioner/install-provisioner.sh
-```
-Or configure manually:
-```bash
-sudo useradd -r -m -s /bin/bash vpn-provisioner
-sudo cp scripts/provisioner/sudoers.example /etc/sudoers.d/vpn-provisioner
-sudo chmod 440 /etc/sudoers.d/vpn-provisioner
-```
-
-Install the bot's public SSH key in `/home/vpn-provisioner/.ssh/authorized_keys`.
-
----
-
-## 2. Deployment with Docker Compose
-
-### Prerequisites
-- Docker Engine 24+ & Docker Compose v2+
-- Valid Telegram Bot Token from `@BotFather`
-- Dedicated Admin Chat / Telegram Channel ID
-
-### Step 1: Configure Environment
-Copy `.env.example` to `.env` and fill in secrets:
-```bash
-cp .env.example .env
-nano .env
-```
-
-### Step 2: Launch Stack
-```bash
-docker compose up -d --build
-```
-
-### Step 3: Verify Status & Logs
-```bash
-docker compose ps
 docker compose logs -f bot worker scheduler
 ```
 
----
+When a job fails for good, or the bot can't send a config, an alert goes to `ADMIN_CHAT_ID`.
 
-## 3. Database Migrations & Backups
+## Changing plans
 
-### Run Migrations Manually
+There's no admin command for editing plans yet, so change them in the database. Without Docker (`sudo apt install sqlite3` first):
+
 ```bash
-docker compose run --rm migration alembic upgrade head
+sudo -u vpn-provisioner sqlite3 /opt/amnezia_vpn_bot/data/bot.db \
+  "UPDATE products SET price_amount = 7.00, price_currency = 'EUR' WHERE code = 'vpn-1m';"
 ```
 
-### Database Backup
+The default plan codes are `vpn-1m`, `vpn-3m` and `vpn-6m`. The `enabled` column hides a plan.
+
+## Backups
+
+Back up the database and the AmneziaWG folder together. One holds the subscriptions, the other the matching peers.
+
+Without Docker:
+
 ```bash
-docker compose exec -t postgres pg_dump -U vpn_user vpn_bot | gzip > backup_$(date +%F_%T).sql.gz
+sudo sqlite3 /opt/amnezia_vpn_bot/data/bot.db ".backup /root/bot-$(date +%F).db"
+sudo tar czf /root/amneziawg-$(date +%F).tgz /etc/amnezia
 ```
 
-### Database Restore
+With Docker:
+
 ```bash
-gunzip < backup_2026-08-24_12:00:00.sql.gz | docker compose exec -T postgres psql -U vpn_user -d vpn_bot
+docker compose exec -T postgres pg_dump -U vpn_bot vpn_bot | gzip > bot-$(date +%F).sql.gz
 ```
 
----
+## Updating
 
-## 4. Peer Reconciliation & Health Checks
+Without Docker:
 
-### Check System Health
-Run within container:
 ```bash
-python -c "import asyncio; from src.app.db.session import async_session_maker; from src.app.utils.health import check_system_health; print(asyncio.run(check_system_health(async_session_maker())))"
+cd /opt/amnezia_vpn_bot
+sudo -u vpn-provisioner git pull
+sudo -u vpn-provisioner .venv/bin/pip install .
+sudo install -m 755 scripts/provisioner/vpnctl /usr/local/sbin/vpnctl
+sudo systemctl restart vpnbot-bot vpnbot-worker vpnbot-scheduler
 ```
 
-### Run Non-Destructive Reconciliation Report
-```bash
-python -m src.app.utils.reconciliation --server nl-1
-```
+With Docker, run `git pull`, then `docker compose up -d --build`. Copy the new `vpnctl` to each VPN host as well.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Order approved but no config arrives | Worker log. A `vpnctl` error there names the cause. Run the same `vpnctl` command by hand as `vpn-provisioner`. |
+| `sudo: a password is required` | `/etc/sudoers.d/vpn-provisioner` is missing, or the service isn't running as `vpn-provisioner`. |
+| `Unable to modify interface` | `awg-quick@awg1` is down. Start it, and the worker retries on its own. |
+| Client gets no handshake | Make sure the client app is 3.1 (AmneziaWG 3.1.x, AmneziaVPN 5.0.2.1+). Check `ENDPOINT_HOST` in `vpnctl.conf` and that ufw allows the port. |
+| `database is locked` | Something else is holding the SQLite file, such as an open `sqlite3` shell. Close it. |
