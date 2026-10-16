@@ -19,3 +19,6 @@ __pycache__/
 *.pyd
 .pytest_cache/
 .coverage
+.sandbox/
+fake-awg-state.json
+*.egg-info/

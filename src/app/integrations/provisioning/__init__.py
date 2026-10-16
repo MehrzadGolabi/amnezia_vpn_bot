@@ -2,6 +2,8 @@ from src.app.integrations.provisioning.base import VPNProvisioner, ProvisionedPe
 from src.app.integrations.provisioning.mock_provisioner import MockProvisioner
 from src.app.integrations.provisioning.ssh_provisioner import (
     SSHCommandProvisioner,
+    LocalCommandProvisioner,
+    VpnctlProvisioner,
     ProvisioningError,
     RetryableProvisioningError,
     PermanentProvisioningError,
@@ -14,6 +16,8 @@ __all__ = [
     "PeerStatus",
     "MockProvisioner",
     "SSHCommandProvisioner",
+    "LocalCommandProvisioner",
+    "VpnctlProvisioner",
     "ProvisioningError",
     "RetryableProvisioningError",
     "PermanentProvisioningError",

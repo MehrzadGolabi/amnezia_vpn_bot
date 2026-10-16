@@ -6,6 +6,7 @@ A high-performance, asynchronous Telegram bot for automated sales, manual receip
 
 ## 🌟 Key Features
 
+- **🧬 Native AmneziaWG 3.1**: Manages clients on an `amneziawg-go` + `awg-quick` server (no Docker container), with every 3.1 obfuscation value copied into client configs.
 - **🛡️ Secure Zero-Root Provisioning**:
   - Outbox worker communicates with VPN nodes via SSH running as non-root `vpn-provisioner`.
   - Node sudo privileges restricted strictly to `/usr/local/sbin/vpnctl`.
@@ -47,8 +48,11 @@ docker compose logs -f bot worker scheduler
 
 Run test suite with code coverage:
 ```bash
-PYTHONPATH=. .venv/bin/pytest tests/unit/ -v --cov=src/app
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+make test
 ```
+
+The tests run `vpnctl` and the worker against a sandboxed AmneziaWG 3.1 server (`scripts/dev/sandbox.sh` with a fake `awg`), so no VPS is needed. To click through the bot itself against that sandbox, see [Testing without a VPS](docs/AMNEZIAWG_INTEGRATION.md#4-testing-without-a-vps).
 
 ---
 

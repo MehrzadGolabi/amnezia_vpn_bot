@@ -140,7 +140,9 @@ class SchedulerService:
             expired_subs = result.scalars().all()
 
             for sub in expired_subs:
-                # Enqueue disable job
+                # The scheduler runs every few minutes; don't stack a new job on one still in flight.
+                if await job_repo.has_open_job(JobType.DISABLE_PEER, sub.id):
+                    continue
                 await job_repo.enqueue_job(
                     job_type=JobType.DISABLE_PEER,
                     aggregate_type="subscription",
@@ -205,6 +207,8 @@ class SchedulerService:
             cleanup_subs = result.scalars().all()
 
             for sub in cleanup_subs:
+                if await job_repo.has_open_job(JobType.REMOVE_PEER, sub.id):
+                    continue
                 await job_repo.enqueue_job(
                     job_type=JobType.REMOVE_PEER,
                     aggregate_type="subscription",

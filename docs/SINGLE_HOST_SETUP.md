@@ -11,14 +11,11 @@ When hosting both the **Telegram Bot** and the **AmneziaWG Server** on the same 
 
 ### Step 1: Install `vpnctl` & Provisioner on the Host
 
-Run this on the host machine:
+The native AmneziaWG 3.1 server (`awg-quick@awg1`) must already be running. Then, on the host:
 ```bash
-# 1. Install vpnctl
-sudo cp scripts/provisioner/vpnctl /usr/local/sbin/vpnctl
-sudo chmod 755 /usr/local/sbin/vpnctl
-
-# 2. Run the provisioner user installer
+# Installs /usr/local/sbin/vpnctl, /etc/amnezia/vpnctl.conf, the vpn-provisioner user and its sudoers entry
 sudo ./scripts/provisioner/install-provisioner.sh
+sudo nano /etc/amnezia/vpnctl.conf     # check INTERFACE and ENDPOINT_HOST
 ```
 
 ---
@@ -92,3 +89,9 @@ docker compose up -d --build
 
 1. **Defense in Depth**: If the bot container is ever breached, the attacker only has an SSH key to `vpn-provisioner` (which has no access to host files, root commands, or Docker daemon).
 2. **Identical Codebase**: The bot codebase behaves identically whether managing 1 local server or 50 remote nodes across different countries.
+
+---
+
+## Without Docker
+
+If you run the bot directly on the host (for example with systemd and `make run-worker`), skip SSH entirely: set `PROVISIONER_MODE=local` and run the worker as a user allowed by the sudoers file (or add that user to it). The worker then calls `sudo -n /usr/local/sbin/vpnctl` directly.

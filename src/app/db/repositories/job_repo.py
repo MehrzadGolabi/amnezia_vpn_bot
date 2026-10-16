@@ -35,6 +35,22 @@ class JobRepository:
         await self.session.flush()
         return job
 
+    async def has_open_job(self, job_type: JobType, aggregate_id: uuid.UUID) -> bool:
+        """True if a job of this type for this aggregate is still queued, running or retrying."""
+        stmt = (
+            select(ProvisioningJob.id)
+            .where(
+                ProvisioningJob.job_type == job_type,
+                ProvisioningJob.aggregate_id == aggregate_id,
+                ProvisioningJob.status.in_(
+                    [JobStatus.PENDING, JobStatus.PROCESSING, JobStatus.RETRYABLE_FAILURE]
+                ),
+            )
+            .limit(1)
+        )
+        res = await self.session.execute(stmt)
+        return res.first() is not None
+
     async def claim_pending_jobs(self, worker_id: str, limit: int = 10) -> List[ProvisioningJob]:
         now = utc_now()
         # Find pending or retryable jobs whose lock has expired (after 5 minutes)

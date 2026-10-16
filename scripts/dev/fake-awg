@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""
+Stand-in for the `awg` binary so vpnctl and the bot can run without a VPS.
+
+Implements the subcommands vpnctl uses: genkey, genpsk, pubkey, set <if> peer ...,
+show <if> latest-handshakes|transfer|peers. The "live interface" is a JSON file
+given with --state (default: $FAKE_AWG_STATE or ./fake-awg-state.json).
+Keys are random base64 like the real tool, but pubkey is a hash, not Curve25519.
+"""
+import base64
+import hashlib
+import json
+import os
+import secrets
+import sys
+
+
+def main(argv):
+    state_path = os.environ.get("FAKE_AWG_STATE", "fake-awg-state.json")
+    if len(argv) >= 2 and argv[0] == "--state":
+        state_path, argv = argv[1], argv[2:]
+
+    def load():
+        try:
+            with open(state_path) as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {}
+
+    def save(state):
+        with open(state_path, "w") as f:
+            json.dump(state, f, indent=2)
+
+    if not argv:
+        sys.exit("usage: fake-awg [--state FILE] <cmd> ...")
+    cmd = argv[0]
+    if cmd in ("genkey", "genpsk"):
+        print(base64.b64encode(secrets.token_bytes(32)).decode())
+    elif cmd == "pubkey":
+        priv = sys.stdin.read().strip()
+        if len(base64.b64decode(priv)) != 32:
+            sys.exit("Key is not the correct length or format")
+        print(base64.b64encode(hashlib.sha256(priv.encode()).digest()).decode())
+    elif cmd == "set":
+        iface, rest = argv[1], argv[2:]
+        state = load()
+        if os.environ.get("FAKE_AWG_DOWN") == "1":
+            sys.exit(f"Unable to modify interface: No such device ({iface})")
+        peers = state.setdefault(iface, {})
+        if rest[:1] != ["peer"]:
+            sys.exit("fake-awg only supports 'set <if> peer ...'")
+        pub, opts = rest[1], rest[2:]
+        if opts == ["remove"]:
+            peers.pop(pub, None)
+        else:
+            peer = peers.setdefault(pub, {"latest_handshake": 0, "rx": 0, "tx": 0})
+            it = iter(opts)
+            for opt in it:
+                val = next(it)
+                if opt == "preshared-key":
+                    with open(val) as f:
+                        peer["psk"] = f.read().strip()
+                elif opt == "allowed-ips":
+                    peer["allowed_ips"] = val
+        save(state)
+    elif cmd == "show":
+        iface, field = argv[1], argv[2]
+        peers = load().get(iface, {})
+        for pub, p in peers.items():
+            if field == "latest-handshakes":
+                print(f"{pub}\t{p.get('latest_handshake', 0)}")
+            elif field == "transfer":
+                print(f"{pub}\t{p.get('rx', 0)}\t{p.get('tx', 0)}")
+            elif field == "peers":
+                print(pub)
+    else:
+        sys.exit(f"fake-awg: unsupported command {cmd}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

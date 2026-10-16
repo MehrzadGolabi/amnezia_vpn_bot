@@ -101,6 +101,9 @@ async def test_scheduler_expired_subscription_disabling(session: AsyncSession):
     disabled_count = await scheduler_service.check_expired_subscriptions()
     assert disabled_count == 1
 
+    # A second pass while that job is still queued doesn't stack another one.
+    assert await scheduler_service.check_expired_subscriptions() == 0
+
     # Verify disable job enqueued
     pending_jobs = await job_repo.claim_pending_jobs(worker_id="test", limit=10)
     assert any(j.job_type == JobType.DISABLE_PEER and j.aggregate_id == sub.id for j in pending_jobs)
