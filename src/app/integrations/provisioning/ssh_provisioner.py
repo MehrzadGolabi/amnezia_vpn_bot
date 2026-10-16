@@ -256,16 +256,27 @@ class SSHCommandProvisioner(VpnctlProvisioner):
         return await asyncio.to_thread(_sync_ssh_run)
 
 
+LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
+
+
+def is_local_host(host: Optional[str]) -> bool:
+    return (host or "").strip().lower() in LOCAL_HOSTS
+
+
 class LocalCommandProvisioner(VpnctlProvisioner):
     """
     Runs vpnctl as a local process. Use it when the bot runs on the VPN host itself
     (VPNCTL_COMMAND defaults to `sudo -n /usr/local/sbin/vpnctl`), or for development
     against scripts/dev/sandbox.sh, which needs no VPS at all.
+
+    Servers whose HOST is set to another machine are reached over SSH instead, so one
+    bot on a VPN host can also sell the other VPN hosts.
     """
 
     def __init__(self, command_timeout: int = 30, vpnctl_command: Optional[str] = None):
         super().__init__(vpnctl_command)
         self.command_timeout = command_timeout
+        self._ssh = SSHCommandProvisioner(command_timeout=command_timeout, vpnctl_command=vpnctl_command)
 
     async def _execute_remote_command(
         self,
@@ -273,6 +284,8 @@ class LocalCommandProvisioner(VpnctlProvisioner):
         server: VPNServer,
         command_args: Sequence[str],
     ) -> Tuple[int, str, str]:
+        if not is_local_host(server.host):
+            return await self._ssh._execute_remote_command(server=server, command_args=list(command_args))
         try:
             proc = await asyncio.create_subprocess_exec(
                 *command_args,
