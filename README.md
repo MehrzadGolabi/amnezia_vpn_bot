@@ -31,6 +31,8 @@ cp .env.example .env
 # Edit .env and supply BOT_TOKEN, ADMIN_CHAT_ID, and ADMIN_TELEGRAM_IDS
 ```
 
+Not using Docker? Follow [Running the bot without Docker](docs/NATIVE_SETUP.md) instead.
+
 ### 2. Launch with Docker Compose
 ```bash
 docker compose up -d --build

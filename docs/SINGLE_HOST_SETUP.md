@@ -94,4 +94,4 @@ docker compose up -d --build
 
 ## Without Docker
 
-If you run the bot directly on the host (for example with systemd and `make run-worker`), skip SSH entirely: set `PROVISIONER_MODE=local` and run the worker as a user allowed by the sudoers file (or add that user to it). The worker then calls `sudo -n /usr/local/sbin/vpnctl` directly.
+See [Running the bot without Docker](NATIVE_SETUP.md): systemd services on the VPN host, `PROVISIONER_MODE=local`, SQLite, no SSH.

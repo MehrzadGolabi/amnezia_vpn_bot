@@ -1,0 +1,16 @@
+[Unit]
+Description=AmneziaWG VPN bot: provisioning worker (runs vpnctl)
+After=network-online.target awg-quick@awg1.service
+Wants=network-online.target
+
+[Service]
+User=vpn-provisioner
+Group=vpn-provisioner
+WorkingDirectory=/opt/amnezia_vpn_bot
+Environment=PYTHONPATH=/opt/amnezia_vpn_bot PYTHONUNBUFFERED=1
+ExecStart=/opt/amnezia_vpn_bot/.venv/bin/python -m src.app.worker.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
