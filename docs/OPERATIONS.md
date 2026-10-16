@@ -16,6 +16,12 @@ Receipts arrive in `ADMIN_CHAT_ID` with Approve and Reject buttons. Approving qu
 
 Turning a server off in `/servers` lasts until the bot restarts. On startup the bot reloads servers from `.env`, so use `VPN_SERVER_<NAME>_ENABLED=false` to turn one off permanently.
 
+## Languages
+
+Customers can use the bot in English or Farsi. New users start in Farsi if their Telegram app is set to Farsi, and in English otherwise. They can switch at any time with the Language button in the menu or `/language`, and the choice is kept. Admin screens stay in English.
+
+In Farsi, plan names are built from the plan's length and device limit (for example "3 ماهه (2 کاربر)"), and locations use the Farsi name of their `COUNTRY_CODE`. Payment instructions come from `PAYMENT_INSTRUCTIONS_FA`.
+
 ## Subscription lifecycle
 
 1. The admin approves the order, and the worker creates the client and sends the `.conf` file and a `vpn://` key.

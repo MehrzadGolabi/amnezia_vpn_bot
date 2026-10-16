@@ -8,13 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.bot.keyboards.customer_keyboards import (
     get_cancel_keyboard,
+    get_language_keyboard,
     get_main_menu_keyboard,
     get_products_keyboard,
     get_servers_keyboard,
     get_subscription_detail_keyboard,
     get_subscriptions_keyboard,
 )
-from src.app.bot.locales.strings import get_text
+from src.app.bot.locales.strings import get_text, normalize_lang, product_title, server_name
+from src.app.bot.ui import show
 from src.app.bot.states.order_states import OrderFlowStates
 from src.app.config.settings import get_settings
 from src.app.db.models.job import JobType
@@ -51,9 +53,7 @@ async def callback_main_menu(query: CallbackQuery, data: Dict[str, Any], state: 
     lang = user.language_code if user else "en"
     text = get_text("welcome", lang)
     kb = get_main_menu_keyboard(lang)
-    if query.message:
-        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await query.answer()
+    await show(query, text, kb)
 
 
 @customer_router.callback_query(F.data == "menu_buy")
@@ -66,20 +66,16 @@ async def callback_menu_buy(query: CallbackQuery, data: Dict[str, Any]):
     servers = await server_repo.list_enabled()
 
     if not servers:
-        empty_msg = "⚠️ <b>No VPN servers are currently active.</b>\nPlease check back shortly or contact support." if lang != "fa" else "⚠️ <b>در حال حاضر هیچ سروری در دسترس نیست.</b>\nلطفا با پشتیبانی تماس بگیرید یا دقایقی دیگر مراجعه فرمایید."
+        empty_msg = get_text("no_servers", lang)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=get_text("btn_back", lang), callback_data="main_menu")]
         ])
-        if query.message:
-            await query.message.edit_text(empty_msg, reply_markup=kb, parse_mode="HTML")
-        await query.answer()
+        await show(query, empty_msg, kb)
         return
 
     text = get_text("select_server", lang)
     kb = get_servers_keyboard(servers, lang)
-    if query.message:
-        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await query.answer()
+    await show(query, text, kb)
 
 
 @customer_router.callback_query(F.data.startswith("srv_"))
@@ -94,16 +90,14 @@ async def callback_select_server(query: CallbackQuery, data: Dict[str, Any]):
 
     server = await server_repo.get_by_slug(server_slug)
     if not server:
-        await query.answer("Server not found", show_alert=True)
+        await query.answer(get_text("server_not_found", lang), show_alert=True)
         return
 
     products = await product_repo.list_enabled()
-    text = get_text("select_plan", lang, server_name=server.display_name)
+    text = get_text("select_plan", lang, server_name=server_name(server, lang))
     kb = get_products_keyboard(server_slug, products, lang)
 
-    if query.message:
-        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await query.answer()
+    await show(query, text, kb)
 
 
 @customer_router.callback_query(F.data.startswith("plan_"))
@@ -123,12 +117,12 @@ async def callback_select_plan(query: CallbackQuery, data: Dict[str, Any], state
     server = await server_repo.get_by_slug(server_slug)
     product = await product_repo.get_by_code(plan_code)
     if not server or not product:
-        await query.answer("Invalid selection", show_alert=True)
+        await query.answer(get_text("invalid_selection", lang), show_alert=True)
         return
 
     settings = get_settings()
     payment_instructions = (
-        settings.PAYMENT_INSTRUCTIONS_FA if lang == "fa" else settings.PAYMENT_INSTRUCTIONS_EN
+        settings.PAYMENT_INSTRUCTIONS_FA if normalize_lang(lang) == "fa" else settings.PAYMENT_INSTRUCTIONS_EN
     )
 
     order = await order_repo.create_order(
@@ -148,17 +142,15 @@ async def callback_select_plan(query: CallbackQuery, data: Dict[str, Any], state
         "order_created",
         lang,
         order_code=order.public_order_code,
-        server_name=server.display_name,
-        plan_title=product.title,
+        server_name=server_name(server, lang),
+        plan_title=product_title(product, lang),
         price=str(product.price_amount),
         currency=product.price_currency,
         instructions=payment_instructions,
     )
     kb = get_cancel_keyboard(lang)
 
-    if query.message:
-        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await query.answer()
+    await show(query, text, kb)
 
 
 @customer_router.callback_query(F.data == "cancel_order")
@@ -169,9 +161,7 @@ async def callback_cancel_order(query: CallbackQuery, data: Dict[str, Any], stat
 
     text = get_text("order_cancelled", lang)
     kb = get_main_menu_keyboard(lang)
-    if query.message:
-        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await query.answer()
+    await show(query, text, kb)
 
 
 @customer_router.message(OrderFlowStates.awaiting_receipt, F.photo | F.document)
@@ -270,7 +260,7 @@ async def cmd_my_vpn(message: Message, data: Dict[str, Any]):
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
         return
 
-    text = "📋 <b>Your Subscriptions:</b>"
+    text = get_text("your_subscriptions", lang)
     kb = get_subscriptions_keyboard(subs, lang)
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
@@ -292,16 +282,12 @@ async def callback_menu_subs(query: CallbackQuery, data: Dict[str, Any]):
                 InlineKeyboardButton(text=get_text("btn_back", lang), callback_data="main_menu"),
             ]]
         )
-        if query.message:
-            await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        await query.answer()
+        await show(query, text, kb)
         return
 
-    text = "📋 <b>Your Subscriptions:</b>"
+    text = get_text("your_subscriptions", lang)
     kb = get_subscriptions_keyboard(subs, lang)
-    if query.message:
-        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await query.answer()
+    await show(query, text, kb)
 
 
 @customer_router.callback_query(F.data.startswith("sub_view_"))
@@ -316,27 +302,25 @@ async def callback_view_subscription(query: CallbackQuery, data: Dict[str, Any])
 
     sub = await sub_repo.get_by_id(sub_id)
     if not sub or sub.user_id != user.id:
-        await query.answer("Subscription not found", show_alert=True)
+        await query.answer(get_text("subscription_not_found", lang), show_alert=True)
         return
 
     server = await server_repo.get_by_id(sub.vpn_server_id)
-    server_name = server.display_name if server else "VPN Server"
+    location = server_name(server, lang) if server else "VPN"
     expiry_str = sub.expires_at.strftime("%Y-%m-%d %H:%M UTC")
 
     text = get_text(
         "subscription_detail",
         lang,
-        server_name=server_name,
-        status=sub.status.value.upper(),
+        server_name=location,
+        status=get_text(f"status_{sub.status.value}", lang),
         expires_at=expiry_str,
         label=sub.peer_label or "N/A",
     )
     is_active = (sub.status == SubscriptionStatus.ACTIVE)
     kb = get_subscription_detail_keyboard(str(sub.id), is_active=is_active, lang=lang)
 
-    if query.message:
-        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await query.answer()
+    await show(query, text, kb)
 
 
 @customer_router.callback_query(F.data.startswith("sub_dl_"))
@@ -344,6 +328,7 @@ async def callback_view_subscription(query: CallbackQuery, data: Dict[str, Any])
 async def callback_redeliver_subscription(query: CallbackQuery, data: Dict[str, Any]):
     user: User = data.get("db_user")
     session: AsyncSession = data.get("session")
+    lang = user.language_code if user else "en"
     settings = get_settings()
 
     raw_id = query.data.split("_")[-1]
@@ -353,12 +338,12 @@ async def callback_redeliver_subscription(query: CallbackQuery, data: Dict[str, 
 
     sub = await sub_repo.get_by_id(sub_id)
     if not sub or sub.user_id != user.id:
-        await query.answer("Subscription not found", show_alert=True)
+        await query.answer(get_text("subscription_not_found", lang), show_alert=True)
         return
 
     if sub.config_redelivery_count >= settings.CONFIG_REDELIVERY_LIMIT:
         await query.answer(
-            f"Redelivery limit reached ({settings.CONFIG_REDELIVERY_LIMIT} times). Please contact support.",
+            get_text("redelivery_limit", lang, limit=settings.CONFIG_REDELIVERY_LIMIT),
             show_alert=True,
         )
         return
@@ -371,7 +356,7 @@ async def callback_redeliver_subscription(query: CallbackQuery, data: Dict[str, 
         payload={"redelivery": True},
     )
     await session.commit()
-    await query.answer("Configuration document has been queued for redelivery!", show_alert=True)
+    await query.answer(get_text("redelivery_queued", lang), show_alert=True)
 
 
 @customer_router.callback_query(F.data.startswith("renew_"))
@@ -388,18 +373,52 @@ async def callback_renew_subscription(query: CallbackQuery, data: Dict[str, Any]
 
     sub = await sub_repo.get_by_id(sub_id)
     if not sub or sub.user_id != user.id:
-        await query.answer("Subscription not found", show_alert=True)
+        await query.answer(get_text("subscription_not_found", lang), show_alert=True)
         return
 
     server = await server_repo.get_by_id(sub.vpn_server_id)
     if not server:
-        await query.answer("Server not available", show_alert=True)
+        await query.answer(get_text("server_unavailable", lang), show_alert=True)
         return
 
     products = await product_repo.list_enabled()
-    text = get_text("select_plan", lang, server_name=server.display_name)
+    text = get_text("select_plan", lang, server_name=server_name(server, lang))
     kb = get_products_keyboard(server.slug, products, lang)
 
-    if query.message:
-        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await query.answer()
+    await show(query, text, kb)
+
+
+@customer_router.message(Command("language"))
+async def cmd_language(message: Message, data: Dict[str, Any]):
+    await message.answer(get_text("choose_language"), reply_markup=get_language_keyboard(), parse_mode="HTML")
+
+
+@customer_router.callback_query(F.data == "menu_lang")
+async def callback_menu_language(query: CallbackQuery, data: Dict[str, Any]):
+    await show(query, get_text("choose_language"), get_language_keyboard())
+
+
+@customer_router.callback_query(F.data.in_({"lang_en", "lang_fa"}))
+async def callback_set_language(query: CallbackQuery, data: Dict[str, Any], state: Optional[FSMContext] = None):
+    if state:
+        await state.clear()
+    user: User = data.get("db_user")
+    session: AsyncSession = data.get("session")
+    lang = query.data.split("_", 1)[1]
+    if user and session:
+        user.language_code = lang
+        await session.commit()
+    await show(query, get_text("welcome", lang), get_main_menu_keyboard(lang))
+
+
+# Included after every other router, so it only sees presses no handler claimed, such as
+# buttons on old messages. Answering stops the button from spinning.
+fallback_router = Router(name="fallback")
+
+
+@fallback_router.callback_query()
+async def callback_unhandled(query: CallbackQuery, data: Dict[str, Any]):
+    user: User = data.get("db_user")
+    lang = user.language_code if user else "en"
+    logger.warning("unhandled_callback", callback_data=query.data)
+    await query.answer(get_text("button_expired", lang), show_alert=True)

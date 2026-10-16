@@ -1,7 +1,7 @@
 from typing import List, Optional
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from src.app.bot.locales.strings import get_text
+from src.app.bot.locales.strings import get_text, product_title, server_name
 from src.app.db.models.product import Product
 from src.app.db.models.server import VPNServer
 from src.app.db.models.subscription import Subscription, SubscriptionStatus
@@ -17,6 +17,20 @@ def get_main_menu_keyboard(lang: str = "en") -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text=get_text("btn_my_subs", lang), callback_data="menu_subs"),
                 InlineKeyboardButton(text=get_text("btn_support", lang), callback_data="menu_support"),
             ],
+            [
+                InlineKeyboardButton(text=get_text("btn_language", lang), callback_data="menu_lang"),
+            ],
+        ]
+    )
+
+
+def get_language_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="English", callback_data="lang_en"),
+                InlineKeyboardButton(text="فارسی", callback_data="lang_fa"),
+            ],
         ]
     )
 
@@ -31,7 +45,7 @@ def get_servers_keyboard(servers: List[VPNServer], lang: str = "en") -> InlineKe
         elif s.country_code == "FI": flag = "🇫🇮"
         elif s.country_code == "US": flag = "🇺🇸"
         
-        btn_text = f"{flag} {s.display_name}"
+        btn_text = f"{flag} {server_name(s, lang)}"
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"srv_{s.slug}")])
     
     buttons.append([InlineKeyboardButton(text=get_text("btn_cancel", lang), callback_data="cancel_order")])
@@ -41,7 +55,7 @@ def get_servers_keyboard(servers: List[VPNServer], lang: str = "en") -> InlineKe
 def get_products_keyboard(server_slug: str, products: List[Product], lang: str = "en") -> InlineKeyboardMarkup:
     buttons = []
     for p in products:
-        btn_text = f"📦 {p.title} - {p.price_amount} {p.price_currency}"
+        btn_text = f"📦 {product_title(p, lang)} - {p.price_amount} {p.price_currency}"
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"plan_{server_slug}_{p.code}")])
     
     buttons.append([InlineKeyboardButton(text=get_text("btn_back", lang), callback_data="menu_buy")])
@@ -61,7 +75,7 @@ def get_subscriptions_keyboard(subscriptions: List[Subscription], lang: str = "e
     for sub in subscriptions:
         is_active = (sub.status == SubscriptionStatus.ACTIVE)
         status_emoji = "🟢" if is_active else "🔴"
-        btn_text = f"{status_emoji} {sub.peer_label or 'VPN Subscription'}"
+        btn_text = f"{status_emoji} {sub.peer_label or get_text('subscription_default_label', lang)}"
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"sub_view_{sub.id}")])
 
     buttons.append([InlineKeyboardButton(text=get_text("btn_back", lang), callback_data="main_menu")])
@@ -72,11 +86,11 @@ def get_subscription_detail_keyboard(subscription_id: str, is_active: bool, lang
     buttons = []
     if is_active:
         buttons.append([
-            InlineKeyboardButton(text="📥 Download Config", callback_data=f"sub_dl_{subscription_id}"),
-            InlineKeyboardButton(text="🔄 Redeliver", callback_data=f"sub_redeliver_{subscription_id}"),
+            InlineKeyboardButton(text=get_text("btn_download_config", lang), callback_data=f"sub_dl_{subscription_id}"),
+            InlineKeyboardButton(text=get_text("btn_redeliver", lang), callback_data=f"sub_redeliver_{subscription_id}"),
         ])
     buttons.append([
-        InlineKeyboardButton(text="💳 Renew Plan", callback_data=f"renew_{subscription_id}"),
+        InlineKeyboardButton(text=get_text("btn_renew", lang), callback_data=f"renew_{subscription_id}"),
     ])
     buttons.append([
         InlineKeyboardButton(text=get_text("btn_back", lang), callback_data="menu_subs"),

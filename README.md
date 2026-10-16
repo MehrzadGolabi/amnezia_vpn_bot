@@ -1,6 +1,6 @@
 # AmneziaWG VPN sales bot
 
-A Telegram bot that sells AmneziaWG 3.1 VPN subscriptions. Customers pick a plan and upload a payment receipt. An admin approves it, and the bot creates a client on the VPN server and sends the config. The bot sends renewal reminders, disables clients when they expire, and removes them after a grace period.
+A Telegram bot that sells AmneziaWG 3.1 VPN subscriptions, in English or Farsi. Customers pick a plan and upload a payment receipt. An admin approves it, and the bot creates a client on the VPN server and sends the config. The bot sends renewal reminders, disables clients when they expire, and removes them after a grace period.
 
 It runs as three processes:
 

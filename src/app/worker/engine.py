@@ -20,6 +20,7 @@ from src.app.integrations.provisioning.ssh_provisioner import (
     RetryableProvisioningError,
 )
 from src.app.utils.amnezia_codec import encode_vpn_url
+from src.app.bot.locales.strings import get_text, server_name
 from src.app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -126,14 +127,12 @@ class WorkerEngine:
 
             # Deliver config file document to user
             expiry_str = sub.expires_at.strftime("%Y-%m-%d %H:%M UTC")
-            caption = (
-                f"✅ <b>Your VPN is Ready!</b>\n\n"
-                f"📍 <b>Location:</b> {server.display_name}\n"
-                f"⏳ <b>Expires:</b> <code>{expiry_str}</code>\n\n"
-                f"📥 <i>Import this file into <b>AmneziaWG 3.1+</b> or <b>AmneziaVPN 5.0+</b>.</i>"
+            lang = user.language_code
+            caption = get_text(
+                "config_ready", lang, server_name=server_name(server, lang), expires_at=expiry_str
             )
             delivered = await self._deliver_config(
-                user.telegram_user_id, peer.config_bytes, peer.config_filename, caption, peer.vpn_url
+                user.telegram_user_id, peer.config_bytes, peer.config_filename, caption, peer.vpn_url, lang
             )
             sub.config_delivery_status = "delivered" if delivered else "failed"
             if not delivered:
@@ -179,13 +178,11 @@ class WorkerEngine:
                     config_bytes = await self.provisioner.get_peer_config(server=server, peer_external_id=sub.peer_external_id)
                     filename = f"{sub.peer_label or 'amneziawg'}.conf"
                     conf_str = config_bytes.decode("utf-8", errors="ignore")
-                    caption = (
-                        f"🔄 <b>Config Redelivery</b> for {server.display_name}\n\n"
-                        f"📥 <i>Import this file into <b>AmneziaWG 3.1+</b> or <b>AmneziaVPN 5.0+</b>.</i>"
-                    )
+                    lang = user.language_code
+                    caption = get_text("config_redelivery", lang, server_name=server_name(server, lang))
                     delivered = await self._deliver_config(
                         user.telegram_user_id, config_bytes, filename, caption,
-                        encode_vpn_url(conf_str) if conf_str else None,
+                        encode_vpn_url(conf_str) if conf_str else None, lang,
                     )
                     if not delivered:
                         raise RetryableProvisioningError(f"Could not send config to user {user.telegram_user_id}")
@@ -199,6 +196,7 @@ class WorkerEngine:
         filename: str,
         caption: str,
         vpn_url: Optional[str],
+        lang: Optional[str] = "en",
     ) -> bool:
         """Send the .conf file, then the vpn:// key as its own message.
         AWG 3.1 keys are too long for Telegram's 1024-character caption limit."""
@@ -216,7 +214,7 @@ class WorkerEngine:
             try:
                 await self.bot.send_message(
                     chat_id=chat_id,
-                    text=f"🔗 <b>One-click key for AmneziaVPN:</b>\n<code>{vpn_url}</code>",
+                    text=get_text("vpn_key", lang, vpn_url=vpn_url),
                     parse_mode="HTML",
                 )
             except Exception as e:
