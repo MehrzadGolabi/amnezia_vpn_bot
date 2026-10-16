@@ -247,10 +247,10 @@ def without_peer(conf: str, name: str) -> str:
     return "".join("".join(lines) for lines in kept)
 
 
-def used_addresses(srv: Server, conf: str) -> set:
+def used_addresses(srv: Server, conf: str, include_saved: bool = True) -> set:
     used = set()
     texts = [conf]
-    if os.path.isdir(srv.clients_dir):
+    if include_saved and os.path.isdir(srv.clients_dir):
         for fn in os.listdir(srv.clients_dir):
             if fn.endswith(".peer"):
                 with open(os.path.join(srv.clients_dir, fn), encoding="utf-8") as f:
@@ -385,6 +385,11 @@ def cmd_enable_peer(args, srv: Server) -> dict:
             block = srv.read_client_file(name, "peer")
             if block is None:
                 raise NotFound(f"No client named {name}")
+            lines = block.splitlines()
+            # awg-add-client.sh can't see disabled peers and may have handed this address out since.
+            addr = ipaddress.ip_interface(get_value(lines, "AllowedIPs").split(",")[0].strip()).ip
+            if addr in used_addresses(srv, conf, include_saved=False):
+                raise VpnctlError(f"{addr} is now used by another peer; remove {name} and create a new one")
             write_private(srv.conf_path, conf.rstrip("\n") + "\n\n" + block.rstrip("\n") + "\n")
         lines = block.splitlines()
         srv.awg_set_peer(get_value(lines, "PublicKey"), get_value(lines, "PresharedKey"),

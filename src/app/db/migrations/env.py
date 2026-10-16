@@ -1,6 +1,7 @@
 import asyncio
 from logging.config import fileConfig
 from sqlalchemy import pool
+from sqlalchemy.engine import make_url
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
@@ -26,6 +27,11 @@ def get_url():
     return url
 
 
+def is_async_url(url: str) -> bool:
+    # Async drivers (asyncpg, aiosqlite) need an async engine; "sqlite+aiosqlite" has no "async" in it.
+    return make_url(url).get_dialect().is_async
+
+
 def run_migrations_offline() -> None:
     url = get_url()
     context.configure(
@@ -48,8 +54,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     url = get_url()
-    # If using asyncpg / aiosqlite, use async_engine
-    if "async" in url:
+    if is_async_url(url):
         configuration = config.get_section(config.config_ini_section, {})
         configuration["sqlalchemy.url"] = url
         connectable = async_engine_from_config(
@@ -71,7 +76,7 @@ async def run_async_migrations() -> None:
 
 def run_migrations_online() -> None:
     url = get_url()
-    if "async" in url:
+    if is_async_url(url):
         asyncio.run(run_async_migrations())
     else:
         from sqlalchemy import create_engine

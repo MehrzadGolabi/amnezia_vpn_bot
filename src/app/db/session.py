@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Optional
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -25,7 +26,21 @@ def get_engine(settings: Optional[Settings] = None) -> AsyncEngine:
             future=True,
             pool_pre_ping=True,
         )
+        if _engine.dialect.name == "sqlite":
+            _enable_sqlite_wal(_engine)
     return _engine
+
+
+def _enable_sqlite_wal(engine: AsyncEngine) -> None:
+    """The bot, worker and scheduler are separate processes sharing one SQLite file:
+    WAL lets them read while another writes, and busy_timeout waits out short locks."""
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _on_connect(dbapi_conn, _record):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=10000")
+        cur.close()
 
 
 def get_session_factory(settings: Optional[Settings] = None) -> async_sessionmaker[AsyncSession]:

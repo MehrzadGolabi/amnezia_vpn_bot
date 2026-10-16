@@ -194,3 +194,16 @@ def test_encode_decode_cli(awg_sandbox):
     res = awg_sandbox.vpnctl("decode", "-u", vpn_url)
     assert res.returncode == 0
     assert res.stdout.strip() == content.strip()
+
+
+def test_enable_refuses_an_address_taken_while_disabled(awg_sandbox):
+    """awg-add-client.sh only looks at awg1.conf, so it can reuse a disabled peer's address."""
+    create(awg_sandbox, "old")
+    awg_sandbox.vpnctl("disable-peer", "--peer-id", "old")
+    with open(awg_sandbox.server_conf, "a") as f:
+        f.write("\n[Peer]\n# laptop\nPublicKey = bGFwdG9wbGFwdG9wbGFwdG9wbGFwdG9wbGFwdG9wbGE=\n"
+                "PresharedKey = cHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHM=\nAllowedIPs = 10.66.66.2/32\n")
+    res = awg_sandbox.vpnctl("enable-peer", "--peer-id", "old")
+    assert res.returncode == 1
+    assert "10.66.66.2 is now used by another peer" in res.stderr
+    assert "# old" not in awg_sandbox.server_conf.read_text()
