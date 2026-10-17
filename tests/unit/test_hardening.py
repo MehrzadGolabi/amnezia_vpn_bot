@@ -207,6 +207,13 @@ def run_installer(tmp_path, stat_output):
     fake_stat = bin_dir / "stat"
     fake_stat.write_text(f"#!/bin/sh\n{stat_output}\n")
     fake_stat.chmod(0o755)
+    # If the check ever stops working and the tests run as root, nothing on the
+    # machine changes: every command the installer would use fails instead.
+    for name in ("id", "useradd", "cp", "install", "mkdir", "chmod", "chown", "touch",
+                 "visudo", "sshd", "systemctl"):
+        stub = bin_dir / name
+        stub.write_text("#!/bin/sh\nexit 99\n")
+        stub.chmod(0o755)
     env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
     return subprocess.run(["bash", str(INSTALLER)], capture_output=True, text=True, env=env)
 

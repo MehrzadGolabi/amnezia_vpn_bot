@@ -121,7 +121,7 @@ echo 'restrict,from="<bot host tailscale IP>",command="/usr/local/sbin/vpnctl-ss
 
 `restrict` turns off port forwarding, terminals and agent forwarding, `from` refuses the key from any other address, and `command` runs `vpnctl-ssh`, which allows only the `vpnctl` commands the bot sends. The installer also adds `/etc/ssh/sshd_config.d/vpn-provisioner.conf`, which applies the same limits to any key for this user. See [Security](ARCHITECTURE.md#more-than-one-server) for what this protects against.
 
-Back on the bot host, connect once. This saves the server's host key and checks that `vpnctl` runs. The output should be JSON with `"exists": false`.
+Back on the bot host, connect once. This saves the server's host key and checks that `vpnctl` runs. The output should be JSON with `"exists": false`. The worker trusts only the key saved here, so check the fingerprint `ssh` shows against the server's own (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server).
 
 ```bash
 sudo -u vpn-provisioner ssh vpn-provisioner@<tailscale IP> sudo -n /usr/local/sbin/vpnctl peer-status --peer-id test

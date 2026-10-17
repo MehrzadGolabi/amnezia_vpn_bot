@@ -116,7 +116,17 @@ sudo systemctl enable --now vpnbot
 
 On each extra VPN host, run `sudo git pull` in `/opt/amnezia_vpn_bot`, then `sudo ./scripts/provisioner/install-provisioner.sh`. It updates `vpnctl` and `vpnctl-ssh` and keeps `vpnctl.conf`. If the bot's key in `/home/vpn-provisioner/.ssh/authorized_keys` doesn't start with `restrict,from=...`, add that part as shown in [More servers](NATIVE_SETUP.md#more-servers).
 
-With Docker, run `git pull`, then `docker compose up -d --build`. Copy the new `vpnctl` to each VPN host as well.
+With Docker, run `git pull`, then `docker compose up -d --build`. On each VPN host, update the root-owned clone and run the installer as above. A clone in a user's home folder must be moved to `/opt/amnezia_vpn_bot` (`sudo git clone`), because the installer refuses to run from a folder that user can change.
+
+Since this version the worker checks every VPN host's SSH key. Docker setups made with an older guide have no `secrets/known_hosts`, so every job would fail. Before `docker compose up`, save each host's key and point every server group at the file (see [Docker setup](DOCKER_SETUP.md#2-ssh-key-for-the-worker)):
+
+```bash
+ssh -i secrets/id_ed25519 -o UserKnownHostsFile=secrets/known_hosts vpn-provisioner@<host> sudo -n /usr/local/sbin/vpnctl peer-status --peer-id test
+```
+
+```ini
+VPN_SERVER_DE_1_SSH_KNOWN_HOSTS_PATH=/app/secrets/known_hosts
+```
 
 ## Troubleshooting
 
@@ -128,6 +138,7 @@ With Docker, run `git pull`, then `docker compose up -d --build`. Copy the new `
 | Client gets no handshake | Make sure the client app is 3.1 (AmneziaWG 3.1.x, AmneziaVPN 5.0.2.1+). Check `ENDPOINT_HOST` in `vpnctl.conf` and that ufw allows the port. |
 | `Host key for <server> ... is not in known_hosts` | Run the `ssh` test from [More servers](NATIVE_SETUP.md#more-servers) once as `vpn-provisioner` (with Docker, the one in [Docker setup](DOCKER_SETUP.md#2-ssh-key-for-the-worker)) to save the key. |
 | `Host key for <server> ... has changed` | If you reinstalled the server, remove its old line with `ssh-keygen -R <host>` as `vpn-provisioner` and connect once again. If you didn't, don't: something else is answering on that address. |
+| Jobs failed for good while a host key was missing | Once the key is saved, queue them again. Without Docker: `sudo -u vpn-provisioner sqlite3 /opt/amnezia_vpn_bot/data/bot.db "UPDATE provisioning_jobs SET status = 'pending', attempt_count = 0 WHERE status = 'permanent_failure' AND last_error LIKE '%known_hosts%';"`. With Docker, run the same `UPDATE` through `docker compose exec -T postgres psql -U vpn_bot vpn_bot -c "..."`. Paid orders then get their configs. |
 | `Refusing to install: ... is owned by uid ...` | The folder must be owned by root. See [Updating](#updating). |
 | `SSH connection failed to <server>` | Run the `ssh` test from [More servers](NATIVE_SETUP.md#more-servers) as `vpn-provisioner` on the bot host. Check the Tailscale IP and `authorized_keys`. |
 | `vpnctl-ssh: command not allowed` | The bot sent a command the VPN host's `vpnctl-ssh` doesn't know. Update both to the same version. |

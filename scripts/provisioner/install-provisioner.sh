@@ -6,6 +6,7 @@ echo "==> Setting up vpn-provisioner service account on AmneziaWG host"
 # Root installs these files as root programs and a sudoers rule. If anyone but root
 # can change them, or the folders above them, a break-in to the bot becomes root here.
 SRC_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+REPO_DIR="$(cd "$SRC_DIR/../.." && pwd -P)"
 check_root_only() {
     local owner mode
     owner=$(stat -c %u "$1")
@@ -13,8 +14,9 @@ check_root_only() {
     if [ "$owner" != 0 ] || (( 8#$mode & 8#022 )); then
         echo "Refusing to install: $1 is owned by uid $owner with mode $mode."
         echo "It must be owned by root and not writable by group or others. Fix it with:"
-        echo "    chown -R root:root /opt/amnezia_vpn_bot && chmod -R go-w /opt/amnezia_vpn_bot"
+        echo "    chown -R root:root $REPO_DIR && chmod -R go-w $REPO_DIR"
         echo "then give vpn-provisioner its data folder back (see docs/OPERATIONS.md#updating)."
+        echo "A clone inside a user's home folder can't pass this check; clone to /opt/amnezia_vpn_bot as root."
         exit 1
     fi
 }
