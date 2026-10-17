@@ -9,7 +9,8 @@ Send these to the bot from an account listed in `ADMIN_TELEGRAM_IDS`.
 | `/admin` | Shows pending receipts and open tickets. |
 | `/servers` | Shows each server's active subscriptions, and lets you turn a server on or off for new orders. |
 | `/products` | Lists the plans. |
-| `/user <telegram_id>` | Shows a customer and how many subscriptions they have. |
+| `/user <telegram_id>` | Shows a customer and their subscriptions, with data used and last connection. |
+| `/extend <config name> <days>` | Adds days to a subscription and turns it back on if it had expired. A negative number takes days off. |
 | `/block <telegram_id>`, `/unblock <telegram_id>` | Suspends or restores a customer. |
 
 Receipts arrive in `ADMIN_CHAT_ID` with Approve and Reject buttons. Approving queues a job, and the worker creates the client and sends the config.
@@ -29,7 +30,9 @@ In Farsi, plan names are built from the plan's length and device limit (for exam
 3. At expiry, the scheduler queues a disable job. The client is removed from `awg1.conf` and the interface, but its files are kept.
 4. After `PEER_REMOVAL_GRACE_DAYS`, the client is deleted.
 
-Renewing is a new order with a new config. It does not extend the old one.
+Renewing from a subscription's page adds time to the same config, so the customer doesn't need a new one. Once a client has been deleted after the grace period, renewing creates a new config.
+
+Data used and last connection come from the VPN server's live counters. They start again from zero when the interface restarts or the client is turned off and on.
 
 ## Logs
 

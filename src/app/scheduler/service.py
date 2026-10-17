@@ -80,7 +80,8 @@ class SchedulerService:
                     7: NotificationType.EXPIRES_7D,
                 }
                 notif_type = type_map.get(matched_day, NotificationType.EXPIRES_1D)
-                idempotency_key = f"sub_{sub.id}_reminder_{matched_day}d"
+                # Keyed by expiry date too, so a renewed subscription gets reminders again.
+                idempotency_key = f"sub_{sub.id}_reminder_{matched_day}d_{expires_at_utc:%Y%m%d}"
 
                 notif, created = await notif_repo.create_notification_if_not_exists(
                     user_id=sub.user_id,
@@ -150,7 +151,7 @@ class SchedulerService:
                     payload={"reason": "subscription_expired"},
                 )
 
-                idempotency_key = f"sub_{sub.id}_expired"
+                idempotency_key = f"sub_{sub.id}_expired_{_to_utc(sub.expires_at):%Y%m%d}"
                 notif, created = await notif_repo.create_notification_if_not_exists(
                     user_id=sub.user_id,
                     notification_type=NotificationType.EXPIRED,

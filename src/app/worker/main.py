@@ -1,5 +1,6 @@
 import asyncio
 import signal
+from typing import Optional
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 
@@ -22,11 +23,11 @@ def build_provisioner(settings) -> VPNProvisioner:
     return MockProvisioner()
 
 
-def build_worker(session_factory, bot: Bot, settings) -> WorkerEngine:
+def build_worker(session_factory, bot: Bot, settings, provisioner: Optional[VPNProvisioner] = None) -> WorkerEngine:
     logger.info("worker_provisioner", mode=settings.PROVISIONER_MODE.value)
     return WorkerEngine(
         session_factory=session_factory,
-        provisioner=build_provisioner(settings),
+        provisioner=provisioner or build_provisioner(settings),
         bot=bot,
         poll_interval=settings.PROVISIONING_JOB_POLL_SECONDS,
         admin_chat_id=settings.ADMIN_CHAT_ID,

@@ -101,6 +101,15 @@ class MockProvisioner(VPNProvisioner):
         if peer_external_id in self._peers:
             self._peers[peer_external_id]["is_active"] = False
 
+    async def enable_peer(
+        self,
+        *,
+        server: VPNServer,
+        peer_external_id: str,
+    ) -> None:
+        if peer_external_id in self._peers:
+            self._peers[peer_external_id]["is_active"] = True
+
     async def remove_peer(
         self,
         *,

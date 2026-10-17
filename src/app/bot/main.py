@@ -13,6 +13,7 @@ from src.app.bot.middleware.user_middleware import UserMiddleware
 from src.app.bot.middleware.throttling_middleware import ThrottlingMiddleware
 from src.app.bot.handlers import admin_router, customer_router, fallback_router, support_router
 from src.app.utils.logging import get_logger, setup_logging
+from src.app.worker.main import build_provisioner
 
 logger = get_logger("bot")
 
@@ -84,8 +85,10 @@ def make_bot(settings) -> Bot:
     )
 
 
-async def build_dispatcher(session_factory, settings) -> Dispatcher:
+async def build_dispatcher(session_factory, settings, provisioner=None) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
+    # Handlers read live usage (data used, last connection) through it.
+    dp["provisioner"] = provisioner or build_provisioner(settings)
 
     # Initialize servers & catalog data
     try:

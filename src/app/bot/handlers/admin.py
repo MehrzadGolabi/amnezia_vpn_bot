@@ -1,3 +1,4 @@
+import html
 import uuid
 from typing import Any, Dict, Optional, Tuple
 from aiogram import F, Router
@@ -8,10 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.bot.locales.strings import get_text
 from src.app.bot.ui import show
+from src.app.bot.usage import usage_text
 from src.app.bot.states.admin_states import AdminTicketStates
 from src.app.config.settings import get_settings
+from src.app.db.models.audit import ActorType
+from src.app.db.models.job import JobType
 from src.app.db.models.order import OrderStatus
+from src.app.db.models.subscription import SubscriptionStatus
 from src.app.db.models.ticket import SenderType, TicketStatus
+from src.app.db.repositories.audit_repo import AuditRepository
+from src.app.db.repositories.job_repo import JobRepository
 from src.app.db.repositories.order_repo import OrderRepository
 from src.app.db.repositories.product_repo import ProductRepository
 from src.app.db.repositories.server_repo import ServerRepository
@@ -178,7 +185,13 @@ async def callback_admin_approve_order(query: CallbackQuery, data: Dict[str, Any
     # Notify Customer
     user = await user_repo.get_by_id(order.user_id)
     if user and query.bot:
-        cust_msg = get_text("payment_approved", user.language_code, order_code=order.public_order_code)
+        if sub is not None and sub.order_id != order.id:
+            cust_msg = get_text(
+                "payment_approved_renewal", user.language_code,
+                label=sub.peer_label or "", expires_at=sub.expires_at.strftime("%Y-%m-%d %H:%M UTC"),
+            )
+        else:
+            cust_msg = get_text("payment_approved", user.language_code, order_code=order.public_order_code)
         try:
             await query.bot.send_message(chat_id=user.telegram_user_id, text=cust_msg, parse_mode="HTML")
         except Exception as e:
@@ -487,7 +500,90 @@ async def cmd_admin_user_lookup(message: Message, data: Dict[str, Any]):
         f"Created At: <code>{user.created_at.strftime('%Y-%m-%d %H:%M UTC') if user.created_at else 'N/A'}</code>"
     )
 
+    server_repo = ServerRepository(session)
+    for sub in subs[:10]:
+        server = await server_repo.get_by_id(sub.vpn_server_id)
+        text += (
+            f"\n\n<code>{sub.peer_label or sub.id}</code>\n"
+            f"{server.display_name if server else '?'} | {sub.status.value} | "
+            f"expires <code>{sub.expires_at.strftime('%Y-%m-%d %H:%M UTC')}</code>"
+        )
+        usage = await usage_text(data.get("provisioner"), server, sub, "en")
+        if usage:
+            text += "\n" + usage
+    if subs:
+        text += "\n\nAdd time with <code>/extend &lt;config name&gt; &lt;days&gt;</code>."
+
     await message.answer(text, parse_mode="HTML")
+
+
+@admin_router.message(Command("extend"))
+async def cmd_admin_extend(message: Message, data: Dict[str, Any]):
+    """Add days to a subscription by hand, for example after a payment made outside the bot."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) != 3 or not parts[2].lstrip("-").isdigit() or int(parts[2]) == 0:
+        await message.answer(
+            "Usage: <code>/extend &lt;config name&gt; &lt;days&gt;</code>\n"
+            "The config name is shown by <code>/user</code>. Negative days take time away.",
+            parse_mode="HTML",
+        )
+        return
+
+    label, days = parts[1], int(parts[2])
+    shown = html.escape(label)
+    session: AsyncSession = data.get("session")
+    sub_repo = SubscriptionRepository(session)
+    sub = await sub_repo.get_by_peer_label(label)
+    if not sub:
+        await message.answer(f"No subscription named <code>{shown}</code>.", parse_mode="HTML")
+        return
+    if sub.removed_at is not None or not sub.peer_external_id:
+        await message.answer(
+            f"<code>{shown}</code> was already removed from the server, so it can't be extended.",
+            parse_mode="HTML",
+        )
+        return
+
+    was_active = sub.status == SubscriptionStatus.ACTIVE
+    sub = await sub_repo.extend_subscription(sub.id, days)
+    reenabled = not was_active and sub.status == SubscriptionStatus.ACTIVE
+    if reenabled:
+        await JobRepository(session).enqueue_job(
+            job_type=JobType.ENABLE_PEER,
+            aggregate_type="subscription",
+            aggregate_id=sub.id,
+            payload={"reason": "admin_extend"},
+        )
+    await AuditRepository(session).record_event(
+        actor_type=ActorType.ADMIN,
+        actor_telegram_user_id=message.from_user.id,
+        event_type="subscription.extended",
+        entity_type="subscription",
+        entity_id=sub.id,
+        metadata={"days": days},
+    )
+    await session.commit()
+
+    expires = sub.expires_at.strftime("%Y-%m-%d %H:%M UTC")
+    await message.answer(
+        f"✅ <code>{label}</code> now expires <code>{expires}</code>."
+        + (" It was disabled and is being turned back on." if reenabled else ""),
+        parse_mode="HTML",
+    )
+
+    user = await UserRepository(session).get_by_id(sub.user_id)
+    if user and message.bot and days > 0:
+        try:
+            await message.bot.send_message(
+                chat_id=user.telegram_user_id,
+                text=get_text("payment_approved_renewal", user.language_code, label=label, expires_at=expires),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error("customer_extend_notification_failed", error=str(e))
 
 
 @admin_router.message(Command("block"))

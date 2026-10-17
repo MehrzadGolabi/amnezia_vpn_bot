@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.app.db.models.base import Base, TimestampMixin
+from src.app.db.models.base import Base, TimestampMixin, EnumString
 
 
 class OrderStatus(str, Enum):
@@ -29,12 +29,16 @@ class Order(Base, TimestampMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     vpn_server_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("vpn_servers.id"), nullable=False)
     product_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("products.id"), nullable=False)
+    # Set when the order extends an existing subscription instead of creating a new one.
+    # No ForeignKey: subscriptions already reference orders, and a second path would make
+    # the Order.subscription relationship ambiguous.
+    renews_subscription_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, nullable=True, index=True)
 
     price_amount_snapshot: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     currency_snapshot: Mapped[str] = mapped_column(String(8), nullable=False)
     payment_instructions_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
 
-    status: Mapped[OrderStatus] = mapped_column(String(32), default=OrderStatus.AWAITING_RECEIPT, nullable=False, index=True)
+    status: Mapped[OrderStatus] = mapped_column(EnumString(OrderStatus), default=OrderStatus.AWAITING_RECEIPT, nullable=False, index=True)
 
     receipt_telegram_file_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     receipt_message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)

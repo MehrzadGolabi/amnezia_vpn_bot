@@ -1,13 +1,16 @@
 import asyncio
 import uuid
+from datetime import timezone
 from typing import Callable, Optional
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.db.models.audit import ActorType
+from src.app.db.models.base import utc_now
 from src.app.db.models.job import JobStatus, JobType, ProvisioningJob
 from src.app.db.models.order import OrderStatus
+from src.app.db.models.subscription import SubscriptionStatus
 from src.app.db.repositories.audit_repo import AuditRepository
 from src.app.db.repositories.job_repo import JobRepository
 from src.app.db.repositories.order_repo import OrderRepository
@@ -24,6 +27,17 @@ from src.app.bot.locales.strings import get_text, server_name
 from src.app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+EXPIRY_REASONS = ("subscription_expired", "grace_period_expired")
+
+
+def _renewed(sub, job) -> bool:
+    """A disable or remove job the scheduler queued at expiry must not undo a renewal that came after it."""
+    if (job.payload or {}).get("reason") not in EXPIRY_REASONS:
+        return False
+    expires_at = sub.expires_at if sub.expires_at.tzinfo else sub.expires_at.replace(tzinfo=timezone.utc)
+    return sub.status == SubscriptionStatus.ACTIVE and expires_at > utc_now()
 
 
 class WorkerEngine:
@@ -143,7 +157,9 @@ class WorkerEngine:
 
         elif job.job_type == JobType.DISABLE_PEER:
             sub = await sub_repo.get_by_id(job.aggregate_id)
-            if sub and sub.peer_external_id:
+            if sub and _renewed(sub, job):
+                logger.info("disable_skipped_renewed", subscription_id=str(sub.id))
+            elif sub and sub.peer_external_id:
                 server = await server_repo.get_by_id(sub.vpn_server_id)
                 if server:
                     await self.provisioner.disable_peer(server=server, peer_external_id=sub.peer_external_id)
@@ -157,7 +173,9 @@ class WorkerEngine:
 
         elif job.job_type == JobType.REMOVE_PEER:
             sub = await sub_repo.get_by_id(job.aggregate_id)
-            if sub and sub.peer_external_id:
+            if sub and _renewed(sub, job):
+                logger.info("remove_skipped_renewed", subscription_id=str(sub.id))
+            elif sub and sub.peer_external_id:
                 server = await server_repo.get_by_id(sub.vpn_server_id)
                 if server:
                     await self.provisioner.remove_peer(server=server, peer_external_id=sub.peer_external_id)
@@ -165,6 +183,19 @@ class WorkerEngine:
                 await audit_repo.record_event(
                     actor_type=ActorType.SYSTEM,
                     event_type="subscription.removed",
+                    entity_type="subscription",
+                    entity_id=sub.id,
+                )
+
+        elif job.job_type == JobType.ENABLE_PEER:
+            sub = await sub_repo.get_by_id(job.aggregate_id)
+            if sub and sub.peer_external_id:
+                server = await server_repo.get_by_id(sub.vpn_server_id)
+                if server:
+                    await self.provisioner.enable_peer(server=server, peer_external_id=sub.peer_external_id)
+                await audit_repo.record_event(
+                    actor_type=ActorType.SYSTEM,
+                    event_type="subscription.enabled",
                     entity_type="subscription",
                     entity_id=sub.id,
                 )
