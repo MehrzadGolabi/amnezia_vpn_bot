@@ -33,7 +33,7 @@ class UserRepository:
                 username=username,
                 first_name=first_name,
                 last_name=last_name,
-                language_code=language_code or "en",
+                language_code="fa" if (language_code or "").lower().startswith("fa") else "en",
             )
             self.session.add(user)
         else:
@@ -43,8 +43,8 @@ class UserRepository:
                 user.first_name = first_name
             if last_name is not None:
                 user.last_name = last_name
-            if language_code is not None:
-                user.language_code = language_code
+            # language_code is only set on first contact; after that it is the customer's own
+            # choice from the language menu, so Telegram's setting must not overwrite it.
         await self.session.flush()
         return user
 

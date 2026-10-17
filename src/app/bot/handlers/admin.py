@@ -1,11 +1,13 @@
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.bot.locales.strings import get_text
+from src.app.bot.ui import show
 from src.app.bot.states.admin_states import AdminTicketStates
 from src.app.config.settings import get_settings
 from src.app.db.models.order import OrderStatus
@@ -49,12 +51,7 @@ def is_admin(user_id: Optional[int]) -> bool:
         return False
 
 
-@admin_router.message(Command("admin"))
-async def cmd_admin_dashboard(message: Message, data: Dict[str, Any]):
-    if not message.from_user or not is_admin(message.from_user.id):
-        return
-
-    session: AsyncSession = data.get("session")
+async def _dashboard(session: AsyncSession) -> Tuple[str, InlineKeyboardMarkup]:
     order_repo = OrderRepository(session)
     ticket_repo = TicketRepository(session)
 
@@ -84,8 +81,54 @@ async def cmd_admin_dashboard(message: Message, data: Dict[str, Any]):
             ],
         ]
     )
+    return text, kb
 
+
+BACK_TO_DASHBOARD = [InlineKeyboardButton(text="🔙 Back", callback_data="adm_back")]
+
+
+@admin_router.message(Command("admin"))
+async def cmd_admin_dashboard(message: Message, data: Dict[str, Any]):
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    text, kb = await _dashboard(data.get("session"))
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@admin_router.callback_query(F.data == "adm_back")
+async def callback_admin_back(query: CallbackQuery, data: Dict[str, Any]):
+    if not query.from_user or not is_admin(query.from_user.id):
+        await query.answer("Unauthorized", show_alert=True)
+        return
+
+    text, kb = await _dashboard(data.get("session"))
+    await show(query, text, kb)
+
+
+@admin_router.callback_query(F.data == "adm_pending_orders")
+async def callback_admin_pending_orders(query: CallbackQuery, data: Dict[str, Any]):
+    if not query.from_user or not is_admin(query.from_user.id):
+        await query.answer("Unauthorized", show_alert=True)
+        return
+
+    orders = await OrderRepository(data.get("session")).list_pending_orders()
+    if not orders:
+        await query.answer("No receipts waiting for review.", show_alert=True)
+        return
+
+    text = f"⏳ <b>Receipts Waiting for Review ({len(orders)}):</b>\n\n"
+    buttons = []
+    for o in orders[:10]:
+        user_tag = f"@{o.user.username}" if o.user and o.user.username else str(o.user.telegram_user_id if o.user else "Unknown")
+        text += f"• <code>{o.public_order_code}</code> | {user_tag} | {o.price_amount_snapshot} {o.currency_snapshot}\n"
+        buttons.append([
+            InlineKeyboardButton(text=f"✅ {o.public_order_code}", callback_data=f"adm_app_{o.id}"),
+            InlineKeyboardButton(text=f"❌ {o.public_order_code}", callback_data=f"adm_rej_{o.id}"),
+        ])
+    text += "\nThe receipt photos are in the admin chat, one message per order."
+    buttons.append(BACK_TO_DASHBOARD)
+    await show(query, text, InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
 @admin_router.callback_query(F.data.startswith("adm_app_"))
@@ -135,11 +178,7 @@ async def callback_admin_approve_order(query: CallbackQuery, data: Dict[str, Any
     # Notify Customer
     user = await user_repo.get_by_id(order.user_id)
     if user and query.bot:
-        cust_msg = (
-            f"✅ <b>Payment Approved!</b>\n\n"
-            f"Your order <code>{order.public_order_code}</code> has been verified.\n"
-            f"Your AmneziaWG VPN configuration is being generated and will be sent shortly."
-        )
+        cust_msg = get_text("payment_approved", user.language_code, order_code=order.public_order_code)
         try:
             await query.bot.send_message(chat_id=user.telegram_user_id, text=cust_msg, parse_mode="HTML")
         except Exception as e:
@@ -186,12 +225,7 @@ async def callback_admin_reject_order(query: CallbackQuery, data: Dict[str, Any]
     # Notify Customer
     user = await user_repo.get_by_id(order.user_id)
     if user and query.bot:
-        cust_msg = (
-            f"❌ <b>Payment Receipt Rejected</b>\n\n"
-            f"Your order <code>{order.public_order_code}</code> receipt was rejected.\n"
-            f"Reason: <i>{reason}</i>\n\n"
-            f"Please check your payment details or contact our support team."
-        )
+        cust_msg = get_text("payment_rejected", user.language_code, order_code=order.public_order_code)
         try:
             await query.bot.send_message(chat_id=user.telegram_user_id, text=cust_msg, parse_mode="HTML")
         except Exception as e:
@@ -219,12 +253,8 @@ async def callback_admin_open_tickets(query: CallbackQuery, data: Dict[str, Any]
         text += f"• <code>{t.public_ticket_code}</code> | {user_tag} | {t.status.value}\n"
         buttons.append([InlineKeyboardButton(text=f"✍️ {t.public_ticket_code}", callback_data=f"adm_rep_tck_{t.id}")])
 
-    buttons.append([InlineKeyboardButton(text="🔙 Back", callback_data="adm_back")])
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    if query.message:
-        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await query.answer()
+    buttons.append(BACK_TO_DASHBOARD)
+    await show(query, text, InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
 @admin_router.callback_query(F.data.startswith("adm_rep_tck_"))
@@ -296,10 +326,8 @@ async def handle_admin_ticket_reply(message: Message, data: Dict[str, Any], stat
     # Deliver to customer
     user = await user_repo.get_by_id(ticket.user_id)
     if user and message.bot:
-        cust_text = (
-            f"💬 <b>Support Reply:</b> <code>{ticket.public_ticket_code}</code>\n\n"
-            f"{reply_body}\n\n"
-            f"<i>You can reply to this message to continue the conversation.</i>"
+        cust_text = get_text(
+            "support_reply", user.language_code, ticket_code=ticket.public_ticket_code, body=reply_body
         )
         try:
             await message.bot.send_message(chat_id=user.telegram_user_id, text=cust_text, parse_mode="HTML")
@@ -343,11 +371,7 @@ async def callback_admin_close_ticket(query: CallbackQuery, data: Dict[str, Any]
     # Deliver to customer
     user = await user_repo.get_by_id(ticket.user_id)
     if user and query.bot:
-        cust_text = (
-            f"🔒 <b>Support Ticket Closed</b>\n\n"
-            f"Ticket <code>{ticket.public_ticket_code}</code> has been marked as resolved.\n"
-            f"Feel free to open a new support request if you need further help."
-        )
+        cust_text = get_text("ticket_closed", user.language_code, ticket_code=ticket.public_ticket_code)
         try:
             await query.bot.send_message(chat_id=user.telegram_user_id, text=cust_text, parse_mode="HTML")
         except Exception as e:
@@ -379,12 +403,11 @@ async def cmd_admin_servers(event: Any, data: Dict[str, Any]):
         toggle_label = f"🔴 Disable {s.slug}" if s.enabled else f"🟢 Enable {s.slug}"
         buttons.append([InlineKeyboardButton(text=toggle_label, callback_data=f"adm_tgl_srv_{s.id}")])
 
-    buttons.append([InlineKeyboardButton(text="🔙 Back", callback_data="adm_back")])
+    buttons.append(BACK_TO_DASHBOARD)
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    if isinstance(event, CallbackQuery) and event.message:
-        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        await event.answer()
+    if isinstance(event, CallbackQuery):
+        await show(event, text, kb)
     elif isinstance(event, Message):
         await event.answer(text, reply_markup=kb, parse_mode="HTML")
 

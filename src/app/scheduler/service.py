@@ -16,6 +16,7 @@ from src.app.db.repositories.job_repo import JobRepository
 from src.app.db.repositories.server_repo import ServerRepository
 from src.app.db.repositories.subscription_repo import SubscriptionRepository
 from src.app.db.repositories.user_repo import UserRepository
+from src.app.bot.locales.strings import get_text, server_name
 from src.app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -92,16 +93,15 @@ class SchedulerService:
                     server = await server_repo.get_by_id(sub.vpn_server_id)
                     if user and server:
                         expiry_str = expires_at_utc.strftime("%Y-%m-%d %H:%M UTC")
+                        lang = user.language_code
                         kb = InlineKeyboardMarkup(
                             inline_keyboard=[[
-                                InlineKeyboardButton(text="💳 Renew Subscription", callback_data=f"renew_{sub.id}")
+                                InlineKeyboardButton(text=get_text("btn_renew", lang), callback_data=f"renew_{sub.id}")
                             ]]
                         )
-                        text = (
-                            f"⚠️ <b>VPN Subscription Expiring Soon</b>\n\n"
-                            f"📍 <b>Location:</b> {server.display_name}\n"
-                            f"⏳ <b>Expires:</b> <code>{expiry_str}</code> (~{matched_day} day(s) left)\n\n"
-                            f"Click below to renew and maintain uninterrupted connection."
+                        text = get_text(
+                            "expiring_soon", lang,
+                            server_name=server_name(server, lang), expires_at=expiry_str, days=matched_day,
                         )
                         try:
                             await self.bot.send_message(
@@ -161,16 +161,13 @@ class SchedulerService:
                     user = await user_repo.get_by_id(sub.user_id)
                     server = await server_repo.get_by_id(sub.vpn_server_id)
                     if user and server:
+                        lang = user.language_code
                         kb = InlineKeyboardMarkup(
                             inline_keyboard=[[
-                                InlineKeyboardButton(text="💳 Reactivate / Renew", callback_data=f"renew_{sub.id}")
+                                InlineKeyboardButton(text=get_text("btn_reactivate", lang), callback_data=f"renew_{sub.id}")
                             ]]
                         )
-                        text = (
-                            f"❌ <b>VPN Subscription Expired</b>\n\n"
-                            f"📍 <b>Location:</b> {server.display_name}\n\n"
-                            f"Your VPN peer has been disabled. Renew now to restore access."
-                        )
+                        text = get_text("expired", lang, server_name=server_name(server, lang))
                         try:
                             await self.bot.send_message(
                                 chat_id=user.telegram_user_id,

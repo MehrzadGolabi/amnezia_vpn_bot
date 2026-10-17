@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.bot.keyboards.customer_keyboards import get_cancel_keyboard, get_main_menu_keyboard
 from src.app.bot.locales.strings import get_text
+from src.app.bot.ui import show
 from src.app.bot.states.support_states import SupportStates
 from src.app.config.settings import get_settings
 from src.app.db.models.ticket import SenderType
@@ -24,12 +25,7 @@ async def cmd_support(message: Message, data: Dict[str, Any], state: FSMContext)
     lang = user.language_code if user else "en"
 
     await state.set_state(SupportStates.writing_message)
-    text = (
-        "💬 <b>Customer Support</b>\n\n"
-        "Please describe your question or issue below. You can also attach photos or documents if needed."
-        if lang == "en"
-        else "💬 <b>پشتیبانی مشتریان</b>\n\nلطفا پیام، سوال یا مشکل خود را ارسال نمایید:"
-    )
+    text = get_text("support_prompt", lang)
     kb = get_cancel_keyboard(lang)
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
@@ -40,16 +36,9 @@ async def callback_menu_support(query: CallbackQuery, data: Dict[str, Any], stat
     lang = user.language_code if user else "en"
 
     await state.set_state(SupportStates.writing_message)
-    text = (
-        "💬 <b>Customer Support</b>\n\n"
-        "Please describe your question or issue below. You can also attach photos or documents if needed."
-        if lang == "en"
-        else "💬 <b>پشتیبانی مشتریان</b>\n\nلطفا پیام، سوال یا مشکل خود را ارسال نمایید:"
-    )
+    text = get_text("support_prompt", lang)
     kb = get_cancel_keyboard(lang)
-    if query.message:
-        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await query.answer()
+    await show(query, text, kb)
 
 
 @support_router.message(SupportStates.writing_message)
@@ -114,11 +103,6 @@ async def handle_support_message(message: Message, data: Dict[str, Any], state: 
             logger.error("admin_ticket_forward_failed", error=str(e))
 
     # Respond to customer
-    reply_text = (
-        f"✅ <b>Message Received!</b>\n\nTicket Code: <code>{active_ticket.public_ticket_code}</code>\n"
-        f"Our support team has been notified and will reply shortly."
-        if lang == "en"
-        else f"✅ <b>پیام شما ثبت شد!</b>\n\nکد پیگیری: <code>{active_ticket.public_ticket_code}</code>\nپاسخ پشتیبانی به زودی برای شما ارسال خواهد شد."
-    )
+    reply_text = get_text("support_received", lang, ticket_code=active_ticket.public_ticket_code)
     kb = get_main_menu_keyboard(lang)
     await message.answer(reply_text, reply_markup=kb, parse_mode="HTML")
