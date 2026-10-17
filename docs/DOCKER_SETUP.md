@@ -23,7 +23,7 @@ ssh-keygen -t ed25519 -f secrets/id_ed25519 -N ""
 chmod 600 secrets/id_ed25519
 ```
 
-Add `secrets/id_ed25519.pub` to `/home/vpn-provisioner/.ssh/authorized_keys` on each VPN host. Check that the key works:
+Add `secrets/id_ed25519.pub` to `/home/vpn-provisioner/.ssh/authorized_keys` on each VPN host, prefixed with `restrict,from="<Docker host IP>",command="/usr/local/sbin/vpnctl-ssh" ` (see [More servers](NATIVE_SETUP.md#more-servers)). Check that the key works:
 
 ```bash
 ssh -i secrets/id_ed25519 vpn-provisioner@<host> sudo -n /usr/local/sbin/vpnctl peer-status --peer-id test

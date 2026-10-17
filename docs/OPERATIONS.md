@@ -100,7 +100,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now vpnbot
 ```
 
-On each extra VPN host, update `vpnctl` the same way: `git pull` in `/opt/amnezia_vpn_bot`, then the `install` line.
+On each extra VPN host, run `git pull` in `/opt/amnezia_vpn_bot`, then `sudo ./scripts/provisioner/install-provisioner.sh`. It updates `vpnctl` and `vpnctl-ssh` and keeps `vpnctl.conf`. If the bot's key in `/home/vpn-provisioner/.ssh/authorized_keys` doesn't start with `restrict,from=...`, add that part as shown in [More servers](NATIVE_SETUP.md#more-servers).
 
 With Docker, run `git pull`, then `docker compose up -d --build`. Copy the new `vpnctl` to each VPN host as well.
 
@@ -113,4 +113,5 @@ With Docker, run `git pull`, then `docker compose up -d --build`. Copy the new `
 | `Unable to modify interface` | `awg-quick@awg1` is down. Start it, and the worker retries on its own. |
 | Client gets no handshake | Make sure the client app is 3.1 (AmneziaWG 3.1.x, AmneziaVPN 5.0.2.1+). Check `ENDPOINT_HOST` in `vpnctl.conf` and that ufw allows the port. |
 | `SSH connection failed to <server>` | Run the `ssh` test from [More servers](NATIVE_SETUP.md#more-servers) as `vpn-provisioner` on the bot host. Check the Tailscale IP and `authorized_keys`. |
+| `vpnctl-ssh: command not allowed` | The bot sent a command the VPN host's `vpnctl-ssh` doesn't know. Update both to the same version. |
 | `database is locked` | Something else is holding the SQLite file, such as an open `sqlite3` shell. Close it. |
