@@ -46,6 +46,14 @@ class VPNProvisioner(Protocol):
     ) -> None:
         ...
 
+    async def enable_peer(
+        self,
+        *,
+        server: VPNServer,
+        peer_external_id: str,
+    ) -> None:
+        ...
+
     async def remove_peer(
         self,
         *,

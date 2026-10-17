@@ -36,7 +36,7 @@ async def test_runs_worker_and_scheduler_alongside_polling(monkeypatch):
         return scheduler_ref["s"]
 
     with patch.object(Dispatcher, "start_polling", fake_polling), \
-         patch.object(all_in_one, "build_dispatcher", lambda sf, st: _dispatcher()), \
+         patch.object(all_in_one, "build_dispatcher", lambda sf, st, pv=None: _dispatcher()), \
          patch.object(all_in_one, "build_worker", build_worker), \
          patch.object(all_in_one, "build_scheduler", build_scheduler):
         await all_in_one.main()

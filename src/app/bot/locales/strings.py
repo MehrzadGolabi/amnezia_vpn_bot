@@ -143,6 +143,26 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "en": "✅ <b>Payment Approved!</b>\n\nYour order <code>{order_code}</code> has been verified.\nYour VPN configuration is being generated and will be sent shortly.",
         "fa": "✅ <b>پرداخت تایید شد!</b>\n\nسفارش <code>{order_code}</code> تایید شد.\nکانفیگ شما در حال ساخت است و به زودی ارسال می‌شود.",
     },
+    "renewal_of": {
+        "en": "🔄 <b>Renewal of</b> <code>{label}</code>. Your current config keeps working.",
+        "fa": "🔄 <b>تمدید</b> <code>{label}</code>. کانفیگ فعلی شما بدون تغییر کار می‌کند.",
+    },
+    "payment_approved_renewal": {
+        "en": "✅ <b>Payment Approved!</b>\n\nYour subscription <code>{label}</code> now runs until <code>{expires_at}</code>.\nKeep using the same config. Nothing to import.",
+        "fa": "✅ <b>پرداخت تایید شد!</b>\n\nاشتراک <code>{label}</code> تا <code>{expires_at}</code> تمدید شد.\nهمان کانفیگ قبلی را استفاده کنید. نیازی به وارد کردن فایل جدید نیست.",
+    },
+    "usage": {
+        "en": "📶 <b>Data used:</b> {total} (download {down}, upload {up})\n🕒 <b>Last connected:</b> {last_seen}",
+        "fa": "📶 <b>حجم مصرفی:</b> {total} (دانلود {down}، آپلود {up})\n🕒 <b>آخرین اتصال:</b> {last_seen}",
+    },
+    "usage_unavailable": {
+        "en": "📶 Usage is not available right now.",
+        "fa": "📶 اطلاعات مصرف در حال حاضر در دسترس نیست.",
+    },
+    "never_connected": {"en": "never", "fa": "هنوز وصل نشده"},
+    "just_now": {"en": "just now", "fa": "همین الان"},
+    "minutes_ago": {"en": "{n} min ago", "fa": "{n} دقیقه پیش"},
+    "hours_ago": {"en": "{n} h ago", "fa": "{n} ساعت پیش"},
     "payment_rejected": {
         "en": "❌ <b>Payment Receipt Rejected</b>\n\nThe receipt for order <code>{order_code}</code> was rejected.\n\nPlease check your payment details or contact our support team.",
         "fa": "❌ <b>رسید پرداخت رد شد</b>\n\nرسید سفارش <code>{order_code}</code> تایید نشد.\n\nلطفا اطلاعات پرداخت را بررسی کنید یا با پشتیبانی تماس بگیرید.",

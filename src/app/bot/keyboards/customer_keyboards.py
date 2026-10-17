@@ -1,3 +1,4 @@
+import uuid
 from typing import List, Optional
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -52,13 +53,19 @@ def get_servers_keyboard(servers: List[VPNServer], lang: str = "en") -> InlineKe
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_products_keyboard(server_slug: str, products: List[Product], lang: str = "en") -> InlineKeyboardMarkup:
+def get_products_keyboard(
+    server_slug: str, products: List[Product], lang: str = "en", renew_subscription_id: Optional[uuid.UUID] = None
+) -> InlineKeyboardMarkup:
+    """Plans for a new order, or, with renew_subscription_id, plans that extend that subscription."""
     buttons = []
     for p in products:
         btn_text = f"📦 {product_title(p, lang)} - {p.price_amount} {p.price_currency}"
-        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"plan_{server_slug}_{p.code}")])
-    
-    buttons.append([InlineKeyboardButton(text=get_text("btn_back", lang), callback_data="menu_buy")])
+        # Telegram allows 64 bytes of callback data, so the subscription ID goes in as 32 hex digits.
+        data = f"rnw_{renew_subscription_id.hex}_{p.code}" if renew_subscription_id else f"plan_{server_slug}_{p.code}"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=data)])
+
+    back = f"sub_view_{renew_subscription_id}" if renew_subscription_id else "menu_buy"
+    buttons.append([InlineKeyboardButton(text=get_text("btn_back", lang), callback_data=back)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

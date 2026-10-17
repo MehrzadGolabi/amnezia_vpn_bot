@@ -105,12 +105,20 @@ class SubscriptionRepository:
             await self.session.flush()
         return sub
 
+    async def get_by_peer_label(self, label: str) -> Optional[Subscription]:
+        res = await self.session.execute(select(Subscription).where(Subscription.peer_label == label))
+        return res.scalar_one_or_none()
+
     async def extend_subscription(self, subscription_id: uuid.UUID, days: int) -> Optional[Subscription]:
+        """Add (or, with negative days, remove) time. Added time counts from now if the
+        subscription has already run out, and brings a disabled one back to active; the
+        caller queues the enable job for its peer."""
         sub = await self.get_by_id(subscription_id)
         if sub:
-            base_time = max(sub.expires_at, utc_now())
+            expires_at = sub.expires_at if sub.expires_at.tzinfo else sub.expires_at.replace(tzinfo=timezone.utc)
+            base_time = max(expires_at, utc_now()) if days > 0 else expires_at
             sub.expires_at = base_time + timedelta(days=days)
-            if sub.status in (SubscriptionStatus.DISABLED, SubscriptionStatus.EXPIRED):
+            if days > 0 and sub.status in (SubscriptionStatus.DISABLED, SubscriptionStatus.EXPIRED):
                 sub.status = SubscriptionStatus.ACTIVE
                 sub.disabled_at = None
             await self.session.flush()

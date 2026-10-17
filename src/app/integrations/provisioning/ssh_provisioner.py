@@ -133,6 +133,12 @@ class VpnctlProvisioner(VPNProvisioner):
             "disable-peer", "--peer-id", sanitize_identifier(peer_external_id),
         )
 
+    async def enable_peer(self, *, server: VPNServer, peer_external_id: str) -> None:
+        await self._run_checked(
+            server, "provisioning_enable_peer_failed",
+            "enable-peer", "--peer-id", sanitize_identifier(peer_external_id),
+        )
+
     async def remove_peer(self, *, server: VPNServer, peer_external_id: str) -> None:
         await self._run_checked(
             server, "provisioning_remove_peer_failed",

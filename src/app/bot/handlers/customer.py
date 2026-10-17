@@ -17,6 +17,7 @@ from src.app.bot.keyboards.customer_keyboards import (
 )
 from src.app.bot.locales.strings import get_text, normalize_lang, product_title, server_name
 from src.app.bot.ui import show
+from src.app.bot.usage import usage_text
 from src.app.bot.states.order_states import OrderFlowStates
 from src.app.config.settings import get_settings
 from src.app.db.models.job import JobType
@@ -107,36 +108,57 @@ async def callback_select_plan(query: CallbackQuery, data: Dict[str, Any], state
     lang = user.language_code if user else "en"
 
     parts = query.data.split("_")
-    server_slug = parts[1]
-    plan_code = parts[2]
-
-    server_repo = ServerRepository(session)
-    product_repo = ProductRepository(session)
-    order_repo = OrderRepository(session)
-
-    server = await server_repo.get_by_slug(server_slug)
-    product = await product_repo.get_by_code(plan_code)
+    server = await ServerRepository(session).get_by_slug(parts[1])
+    product = await ProductRepository(session).get_by_code(parts[2])
     if not server or not product:
         await query.answer(get_text("invalid_selection", lang), show_alert=True)
         return
+    await _start_order(query, data, state, server, product)
+
+
+@customer_router.callback_query(F.data.startswith("rnw_"))
+async def callback_select_renewal_plan(query: CallbackQuery, data: Dict[str, Any], state: FSMContext):
+    """A plan picked from Renew: the order adds time to this subscription instead of making a new one."""
+    user: User = data.get("db_user")
+    session: AsyncSession = data.get("session")
+    lang = user.language_code if user else "en"
+
+    _, sub_hex, plan_code = query.data.split("_", 2)
+    sub = await SubscriptionRepository(session).get_by_id(uuid.UUID(hex=sub_hex))
+    if not sub or sub.user_id != user.id:
+        await query.answer(get_text("subscription_not_found", lang), show_alert=True)
+        return
+    server = await ServerRepository(session).get_by_id(sub.vpn_server_id)
+    product = await ProductRepository(session).get_by_code(plan_code)
+    if not server or not product:
+        await query.answer(get_text("invalid_selection", lang), show_alert=True)
+        return
+    await _start_order(query, data, state, server, product, renews=sub)
+
+
+async def _start_order(query: CallbackQuery, data: Dict[str, Any], state: FSMContext, server, product, renews=None):
+    user: User = data.get("db_user")
+    session: AsyncSession = data.get("session")
+    lang = user.language_code if user else "en"
 
     settings = get_settings()
     payment_instructions = (
         settings.PAYMENT_INSTRUCTIONS_FA if normalize_lang(lang) == "fa" else settings.PAYMENT_INSTRUCTIONS_EN
     )
 
-    order = await order_repo.create_order(
+    order = await OrderRepository(session).create_order(
         user_id=user.id,
         vpn_server_id=server.id,
         product_id=product.id,
         price_amount=product.price_amount,
         price_currency=product.price_currency,
         payment_instructions=payment_instructions,
+        renews_subscription_id=renews.id if renews else None,
     )
     await session.commit()
 
     await state.set_state(OrderFlowStates.awaiting_receipt)
-    await state.update_data(order_id=str(order.id), server_slug=server_slug)
+    await state.update_data(order_id=str(order.id), server_slug=server.slug)
 
     text = get_text(
         "order_created",
@@ -148,9 +170,9 @@ async def callback_select_plan(query: CallbackQuery, data: Dict[str, Any], state
         currency=product.price_currency,
         instructions=payment_instructions,
     )
-    kb = get_cancel_keyboard(lang)
-
-    await show(query, text, kb)
+    if renews:
+        text = get_text("renewal_of", lang, label=renews.peer_label or "") + "\n" + text
+    await show(query, text, get_cancel_keyboard(lang))
 
 
 @customer_router.callback_query(F.data == "cancel_order")
@@ -162,6 +184,13 @@ async def callback_cancel_order(query: CallbackQuery, data: Dict[str, Any], stat
     text = get_text("order_cancelled", lang)
     kb = get_main_menu_keyboard(lang)
     await show(query, text, kb)
+
+
+async def _renewal_line(session: AsyncSession, order) -> str:
+    if not order.renews_subscription_id:
+        return ""
+    sub = await SubscriptionRepository(session).get_by_id(order.renews_subscription_id)
+    return f"🔄 <b>Renews:</b> <code>{sub.peer_label if sub else order.renews_subscription_id}</code>\n"
 
 
 @customer_router.message(OrderFlowStates.awaiting_receipt, F.photo | F.document)
@@ -206,6 +235,7 @@ async def handle_receipt_upload(message: Message, data: Dict[str, Any], state: F
             f"🧾 <b>Order Code:</b> <code>{order.public_order_code}</code>\n"
             f"👤 <b>User:</b> <code>{user.telegram_user_id}</code> (@{user.username or 'N/A'})\n"
             f"💰 <b>Amount:</b> <code>{order.price_amount_snapshot} {order.currency_snapshot}</code>\n"
+            f"{await _renewal_line(session, order)}"
             f"📝 <b>Note:</b> {note or 'None'}\n\n"
             f"Action: Review via Admin Panel."
         )
@@ -317,6 +347,9 @@ async def callback_view_subscription(query: CallbackQuery, data: Dict[str, Any])
         expires_at=expiry_str,
         label=sub.peer_label or "N/A",
     )
+    usage = await usage_text(data.get("provisioner"), server, sub, lang)
+    if usage:
+        text += "\n" + usage
     is_active = (sub.status == SubscriptionStatus.ACTIVE)
     kb = get_subscription_detail_keyboard(str(sub.id), is_active=is_active, lang=lang)
 
@@ -383,7 +416,7 @@ async def callback_renew_subscription(query: CallbackQuery, data: Dict[str, Any]
 
     products = await product_repo.list_enabled()
     text = get_text("select_plan", lang, server_name=server_name(server, lang))
-    kb = get_products_keyboard(server.slug, products, lang)
+    kb = get_products_keyboard(server.slug, products, lang, renew_subscription_id=sub.id)
 
     await show(query, text, kb)
 

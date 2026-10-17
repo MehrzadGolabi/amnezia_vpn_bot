@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.app.db.models.base import Base, utc_now
+from src.app.db.models.base import Base, utc_now, EnumString
 
 
 class NotificationType(str, Enum):
@@ -27,7 +27,7 @@ class Notification(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     subscription_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True)
 
-    notification_type: Mapped[NotificationType] = mapped_column(String(32), nullable=False)
+    notification_type: Mapped[NotificationType] = mapped_column(EnumString(NotificationType), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
 
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)

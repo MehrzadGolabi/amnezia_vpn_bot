@@ -13,7 +13,7 @@ from src.app.config.settings import get_settings
 from src.app.db.session import get_session_factory
 from src.app.scheduler.main import build_scheduler
 from src.app.utils.logging import get_logger, setup_logging
-from src.app.worker.main import build_worker
+from src.app.worker.main import build_provisioner, build_worker
 
 logger = get_logger("main")
 
@@ -24,8 +24,10 @@ async def main():
 
     bot = make_bot(settings)
     session_factory = get_session_factory(settings)
-    dp = await build_dispatcher(session_factory, settings)
-    worker = build_worker(session_factory, bot, settings)
+    # One provisioner for both, so the bot's usage view and the worker see the same peers.
+    provisioner = build_provisioner(settings)
+    dp = await build_dispatcher(session_factory, settings, provisioner)
+    worker = build_worker(session_factory, bot, settings, provisioner)
     scheduler = build_scheduler(session_factory, bot, settings)
 
     worker_task = asyncio.create_task(worker.start())

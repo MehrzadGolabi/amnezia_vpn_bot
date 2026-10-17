@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy import BigInteger, DateTime, JSON, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.app.db.models.base import Base, utc_now
+from src.app.db.models.base import Base, utc_now, EnumString
 
 
 class ActorType(str, Enum):
@@ -18,7 +18,7 @@ class AuditEvent(Base):
     __tablename__ = "audit_events"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    actor_type: Mapped[ActorType] = mapped_column(String(32), nullable=False, index=True)
+    actor_type: Mapped[ActorType] = mapped_column(EnumString(ActorType), nullable=False, index=True)
     actor_telegram_user_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, index=True)
 
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

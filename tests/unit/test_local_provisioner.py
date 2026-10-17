@@ -1,5 +1,6 @@
 """The bot's provisioner and worker, end to end against a sandboxed AWG 3.1 server."""
 import uuid
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from src.app.db.models.base import Base
 from src.app.db.models.job import JobStatus, JobType
+from src.app.db.models.order import OrderStatus
 from src.app.db.models.server import VPNServer
 from src.app.db.models.subscription import SubscriptionStatus
 from src.app.db.repositories.job_repo import JobRepository
@@ -136,3 +138,59 @@ async def test_local_mode_reaches_other_hosts_over_ssh(awg_sandbox, server):
     await prov.create_peer(server=server, subscription_id=uuid.uuid4(), telegram_user_id=7)
     prov._ssh._execute_remote_command.assert_not_awaited()
     assert len(awg_sandbox.live_peers()) == 1
+
+
+async def test_renewal_extends_the_same_peer(awg_sandbox, session):
+    user = await UserRepository(session).upsert_user(telegram_user_id=778, username="renewer")
+    server = await ServerRepository(session).create_or_update(
+        slug="de-1", display_name="Germany", country_code="DE", host="localhost")
+    product = await ProductRepository(session).create_or_update(
+        code="vpn-1m", title="1 Month", duration_days=30, device_limit=1,
+        price_amount=Decimal("5.00"), price_currency="EUR")
+    order_repo = OrderRepository(session)
+    first = await order_repo.create_order(user.id, server.id, product.id, product.price_amount, "EUR", "Pay")
+    _, sub, _ = await order_repo.approve_order_atomic(first.id, admin_telegram_id=1)
+    await session.commit()
+
+    worker = WorkerEngine(
+        session_factory=lambda: session,
+        provisioner=LocalCommandProvisioner(vpnctl_command=awg_sandbox.vpnctl_command),
+        bot=AsyncMock(),
+    )
+    assert await worker.run_single_batch() == 1
+    peers_before = dict(awg_sandbox.live_peers())
+
+    # It runs out and the scheduler's disable job turns the peer off.
+    sub = await SubscriptionRepository(session).get_by_id(sub.id)
+    sub.status = SubscriptionStatus.EXPIRED
+    sub.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+    job_repo = JobRepository(session)
+    await job_repo.enqueue_job(job_type=JobType.DISABLE_PEER, aggregate_type="subscription",
+                               aggregate_id=sub.id, payload={"reason": "subscription_expired"})
+    await session.commit()
+    assert await worker.run_single_batch() == 1
+    assert awg_sandbox.live_peers() == {}
+    old_expiry = (await SubscriptionRepository(session).get_by_id(sub.id)).expires_at
+
+    renewal = await order_repo.create_order(user.id, server.id, product.id, product.price_amount, "EUR", "Pay",
+                                            renews_subscription_id=sub.id)
+    ok, renewed, job = await order_repo.approve_order_atomic(renewal.id, admin_telegram_id=1)
+    await session.commit()
+    assert ok and renewed.id == sub.id and job.job_type == JobType.ENABLE_PEER
+    assert renewed.status == SubscriptionStatus.ACTIVE
+    assert renewed.expires_at.replace(tzinfo=None) > old_expiry.replace(tzinfo=None)
+    assert (await order_repo.get_by_id(renewal.id)).status == OrderStatus.FULFILLED
+
+    # Approving twice does nothing.
+    again, _, _ = await order_repo.approve_order_atomic(renewal.id, admin_telegram_id=1)
+    assert again is False
+
+    assert await worker.run_single_batch() == 1
+    assert awg_sandbox.live_peers() == peers_before  # same key, same address, no new config
+
+    # A disable job the scheduler queued before the renewal doesn't undo it.
+    await job_repo.enqueue_job(job_type=JobType.DISABLE_PEER, aggregate_type="subscription",
+                               aggregate_id=sub.id, payload={"reason": "subscription_expired"})
+    await session.commit()
+    assert await worker.run_single_batch() == 1
+    assert awg_sandbox.live_peers() == peers_before

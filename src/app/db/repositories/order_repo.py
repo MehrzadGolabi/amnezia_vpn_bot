@@ -23,6 +23,12 @@ def generate_order_code() -> str:
     return f"ORD-{code}"
 
 
+
+def _aware(dt: datetime) -> datetime:
+    """SQLite hands back naive datetimes; they are stored in UTC."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 class OrderRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -53,6 +59,7 @@ class OrderRepository:
         price_amount: Decimal,
         price_currency: str,
         payment_instructions: str,
+        renews_subscription_id: Optional[uuid.UUID] = None,
     ) -> Order:
         code = generate_order_code()
         order = Order(
@@ -64,6 +71,7 @@ class OrderRepository:
             currency_snapshot=price_currency,
             payment_instructions_snapshot=payment_instructions,
             status=OrderStatus.AWAITING_RECEIPT,
+            renews_subscription_id=renews_subscription_id,
         )
         self.session.add(order)
         await self.session.flush()
@@ -119,11 +127,15 @@ class OrderRepository:
             return False, None, None
 
         now = utc_now()
-        order.status = OrderStatus.PROVISIONING
         order.reviewed_by_telegram_user_id = admin_telegram_id
         order.reviewed_at = now
-
         duration_days = product.duration_days if product else 30
+
+        renewed = await self._renewable_subscription(order)
+        if renewed is not None:
+            return await self._approve_renewal(order, renewed, duration_days, admin_telegram_id)
+
+        order.status = OrderStatus.PROVISIONING
         subscription = Subscription(
             user_id=order.user_id,
             order_id=order.id,
@@ -164,6 +176,61 @@ class OrderRepository:
         await self.session.flush()
 
         return True, subscription, job
+
+    async def _renewable_subscription(self, order: Order) -> Optional[Subscription]:
+        """The subscription this order extends, if it still has a peer on the server.
+
+        Once a peer has been removed (after the grace period) there is nothing left to
+        extend, and the order falls back to creating a new subscription."""
+        if not order.renews_subscription_id:
+            return None
+        sub = await self.session.get(Subscription, order.renews_subscription_id)
+        if (
+            sub is None
+            or sub.user_id != order.user_id
+            or sub.vpn_server_id != order.vpn_server_id
+            or not sub.peer_external_id
+            or sub.removed_at is not None
+        ):
+            return None
+        return sub
+
+    async def _approve_renewal(
+        self, order: Order, sub: Subscription, duration_days: int, admin_telegram_id: int
+    ) -> Tuple[bool, Subscription, Optional[ProvisioningJob]]:
+        """Add the plan's days to an existing subscription. Its peer and config stay the same;
+        a peer that was disabled at expiry gets an enable job."""
+        was_disabled = sub.status != SubscriptionStatus.ACTIVE
+        sub.expires_at = max(_aware(sub.expires_at), utc_now()) + timedelta(days=duration_days)
+        sub.status = SubscriptionStatus.ACTIVE
+        sub.disabled_at = None
+        order.status = OrderStatus.FULFILLED
+
+        job = None
+        if was_disabled:
+            job = ProvisioningJob(
+                job_type=JobType.ENABLE_PEER,
+                aggregate_type="subscription",
+                aggregate_id=sub.id,
+                status=JobStatus.PENDING,
+                payload={"subscription_id": str(sub.id), "order_id": str(order.id)},
+            )
+            self.session.add(job)
+
+        self.session.add(AuditEvent(
+            actor_type=ActorType.ADMIN,
+            actor_telegram_user_id=admin_telegram_id,
+            event_type="order.approved",
+            entity_type="order",
+            entity_id=order.id,
+            metadata_json={
+                "order_code": order.public_order_code,
+                "renewed_subscription_id": str(sub.id),
+                "days_added": duration_days,
+            },
+        ))
+        await self.session.flush()
+        return True, sub, job
 
     async def reject_order(
         self,

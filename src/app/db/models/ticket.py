@@ -5,7 +5,7 @@ from typing import List, Optional
 from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.app.db.models.base import Base, TimestampMixin, utc_now
+from src.app.db.models.base import Base, TimestampMixin, utc_now, EnumString
 
 
 class TicketStatus(str, Enum):
@@ -28,7 +28,7 @@ class SupportTicket(Base, TimestampMixin):
     public_ticket_code: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    status: Mapped[TicketStatus] = mapped_column(String(32), default=TicketStatus.OPEN, nullable=False, index=True)
+    status: Mapped[TicketStatus] = mapped_column(EnumString(TicketStatus), default=TicketStatus.OPEN, nullable=False, index=True)
     subject: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     assigned_admin_telegram_user_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -43,7 +43,7 @@ class SupportMessage(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     ticket_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("support_tickets.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    sender_type: Mapped[SenderType] = mapped_column(String(32), nullable=False)
+    sender_type: Mapped[SenderType] = mapped_column(EnumString(SenderType), nullable=False)
     sender_telegram_user_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
     body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

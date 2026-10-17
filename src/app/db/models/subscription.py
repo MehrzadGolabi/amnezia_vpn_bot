@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.app.db.models.base import Base, TimestampMixin
+from src.app.db.models.base import Base, TimestampMixin, EnumString
 
 
 class SubscriptionStatus(str, Enum):
@@ -26,7 +26,7 @@ class Subscription(Base, TimestampMixin):
     vpn_server_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("vpn_servers.id"), nullable=False)
     product_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("products.id"), nullable=False)
 
-    status: Mapped[SubscriptionStatus] = mapped_column(String(32), default=SubscriptionStatus.PROVISIONING, nullable=False, index=True)
+    status: Mapped[SubscriptionStatus] = mapped_column(EnumString(SubscriptionStatus), default=SubscriptionStatus.PROVISIONING, nullable=False, index=True)
 
     peer_external_id: Mapped[Optional[str]] = mapped_column(String(128), unique=True, nullable=True, index=True)
     peer_label: Mapped[Optional[str]] = mapped_column(String(128), unique=True, nullable=True)
