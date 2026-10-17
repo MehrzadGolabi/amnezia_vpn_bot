@@ -169,7 +169,7 @@ async def callback_admin_approve_order(query: CallbackQuery, data: Dict[str, Any
         return
 
     admin_tag = f"@{query.from_user.username}" if query.from_user.username else str(query.from_user.id)
-    updated_caption = f"{query.message.caption or query.message.text or ''}\n\n✅ <b>Approved by {admin_tag}</b>"
+    updated_caption = f"{query.message.html_text}\n\n✅ <b>Approved by {admin_tag}</b>"
 
     if query.message:
         try:
@@ -222,7 +222,7 @@ async def callback_admin_reject_order(query: CallbackQuery, data: Dict[str, Any]
         return
 
     admin_tag = f"@{query.from_user.username}" if query.from_user.username else str(query.from_user.id)
-    updated_caption = f"{query.message.caption or query.message.text or ''}\n\n❌ <b>Rejected by {admin_tag}</b>\nReason: {reason}"
+    updated_caption = f"{query.message.html_text}\n\n❌ <b>Rejected by {admin_tag}</b>\nReason: {reason}"
 
     if query.message:
         try:
@@ -340,7 +340,7 @@ async def handle_admin_ticket_reply(message: Message, data: Dict[str, Any], stat
     user = await user_repo.get_by_id(ticket.user_id)
     if user and message.bot:
         cust_text = get_text(
-            "support_reply", user.language_code, ticket_code=ticket.public_ticket_code, body=reply_body
+            "support_reply", user.language_code, ticket_code=ticket.public_ticket_code, body=html.escape(reply_body)
         )
         try:
             await message.bot.send_message(chat_id=user.telegram_user_id, text=cust_text, parse_mode="HTML")

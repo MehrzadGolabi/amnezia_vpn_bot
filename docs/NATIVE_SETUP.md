@@ -69,10 +69,13 @@ Delete any other `VPN_SERVER_*` lines, such as example groups from an older `.en
 
 Keep the token private. If it is ever posted somewhere, run `/revoke` in @BotFather and put the new one in `.env`.
 
+The code stays owned by root, and `vpn-provisioner` gets only the database folder and read access to `.env`. If the service user could change the code, a break-in to the bot would become root the next time you update, because root runs `install-provisioner.sh` from this folder.
+
 ```bash
 mkdir -p data
-chown -R vpn-provisioner:vpn-provisioner /opt/amnezia_vpn_bot
-chmod 600 .env
+chown -R vpn-provisioner:vpn-provisioner data
+chown root:vpn-provisioner .env
+chmod 640 .env
 ```
 
 ## 4. Start

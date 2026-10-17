@@ -41,9 +41,12 @@ Subscription: `provisioning` -> `active` -> `disabled` (expired, peer off) -> `e
 - Client private keys and configs live only on the VPN server, in `/etc/amnezia/amneziawg/clients/`, readable by root only. The database stores the client name, not the keys.
 - The bot processes never run as root. `vpn-provisioner` can run only `vpnctl`, and only with the subcommands listed in `sudoers.example`.
 - `vpnctl` checks every argument: names must match `^[a-zA-Z0-9_-]{1,64}$`, and subscription IDs must be UUIDs. The SSH provisioner checks names too, and quotes every argument.
-- With Docker, the SSH key is mounted read-only. Set `SSH_KNOWN_HOSTS_PATH` to have the host key checked. Without it, any host key is accepted.
-- Logs redact bot tokens, passwords and private keys.
-- `ThrottlingMiddleware` drops messages sent less than 0.5 s apart by the same user. `/block` suspends a user.
+- The worker checks every VPN host's SSH key against `known_hosts` and refuses unknown or changed keys. With Docker, the SSH key and `known_hosts` are mounted read-only.
+- The code in `/opt/amnezia_vpn_bot` is owned by root. `vpn-provisioner` can write only `data/`, and can read but not change `.env`. Root runs `install-provisioner.sh` from this folder, so a bot the service user could edit would give root to anyone who breaks into the bot. The installer refuses to run if the folder isn't root-owned.
+- Customer text (receipt notes, support messages) is HTML-escaped before it reaches the admin chat. Alerts that carry `vpnctl` output are sent as plain text.
+- Logs redact bot tokens, passwords, private keys, client configs and `vpn://` links.
+- `ThrottlingMiddleware` drops messages and button presses sent less than 0.5 s apart by the same user. `/block` suspends a user.
+- Button data comes from the client, so handlers check again that a server and plan are on sale, and that a subscription belongs to the user.
 
 ### More than one server
 
@@ -52,7 +55,7 @@ The bot host holds an SSH key that reaches `vpn-provisioner` on every other VPN 
 What a break-in can reach:
 
 - **Bot host:** the bot token, the database, and `vpnctl` on every server. The attacker can create, disable or remove customers and read their configs, but gets no shell or root on the other servers. Keep this host patched and backed up.
-- **Any other server:** only that server's own customers. It can't use the bot's key, and with the Tailscale policy below it can't open connections to the bot host or other servers. The bot checks its host key and treats what `vpnctl` returns as data.
+- **Any other server:** only that server's own customers. It can't use the bot's key, and with the Tailscale policy below it can't open connections to the bot host or other servers. The bot checks its host key and treats what `vpnctl` returns as data: it takes only the config and builds the file name and `vpn://` link itself.
 
 Tailscale allows every device to reach every other one by default. To stop a server from reaching the others, tag the servers in the Tailscale admin console (Machines, Edit ACL tags) and set a policy (Access controls) like this:
 

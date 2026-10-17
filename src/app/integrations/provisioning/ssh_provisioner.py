@@ -88,7 +88,8 @@ class VpnctlProvisioner(VPNProvisioner):
         try:
             return json.loads(stdout.strip())
         except ValueError as e:
-            logger.error("invalid_vpnctl_output", server=server.slug, stdout=stdout, error=str(e))
+            # Not stdout itself: it can hold config_b64, the client's private key.
+            logger.error("invalid_vpnctl_output", server=server.slug, stdout_bytes=len(stdout), error=str(e))
             raise RetryableProvisioningError(f"Malformed response from vpnctl: {e}") from e
 
     async def create_peer(
@@ -107,13 +108,13 @@ class VpnctlProvisioner(VPNProvisioner):
             "create-peer", "--subscription-id", safe_sub_id, "--label", safe_label,
         )
         try:
+            # A VPN host may be compromised, so only the config itself is taken from it.
+            # The filename and vpn:// link are built here, never copied from its reply.
             peer_id = sanitize_identifier(data["peer_id"])
             label = sanitize_identifier(data.get("label", safe_label))
-            filename = data.get("filename", f"{label}.conf")
-            config_bytes = base64.b64decode(data["config_b64"])
-            vpn_url = data.get("vpn_url")
-            if not vpn_url and config_bytes:
-                vpn_url = encode_vpn_url(config_bytes.decode("utf-8", errors="ignore"))
+            filename = f"{label}.conf"
+            config_bytes = base64.b64decode(data["config_b64"], validate=True)
+            vpn_url = encode_vpn_url(config_bytes.decode("utf-8")) if config_bytes else None
         except Exception as e:
             logger.error("invalid_vpnctl_output", server=server.slug, error=str(e))
             raise RetryableProvisioningError(f"Malformed response from vpnctl: {e}") from e
@@ -225,11 +226,16 @@ class SSHCommandProvisioner(VpnctlProvisioner):
 
         def _sync_ssh_run() -> Tuple[int, str, str]:
             client = paramiko.SSHClient()
-            if known_hosts:
-                client.load_host_keys(known_hosts)
-                client.set_missing_host_key_policy(paramiko.RejectPolicy())
-            else:
-                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            # Never trust a host key on first sight: whoever answers on that address
+            # would receive every command and could hand customers its own configs.
+            try:
+                if known_hosts:
+                    client.load_host_keys(known_hosts)
+                else:
+                    client.load_system_host_keys()
+            except OSError as e:
+                raise PermanentProvisioningError(f"Cannot read known_hosts for {server.slug}: {e}") from e
+            client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
             try:
                 client.connect(
@@ -253,7 +259,21 @@ class SSHCommandProvisioner(VpnctlProvisioner):
                 err_text = stderr.read().decode("utf-8")
                 exit_code = stdout.channel.recv_exit_status()
                 return exit_code, out_text, err_text
-            except (paramiko.SSHException, TimeoutError, OSError) as e:
+            except paramiko.BadHostKeyException as e:
+                logger.error("ssh_host_key_mismatch", server=server.slug, host=host)
+                raise PermanentProvisioningError(
+                    f"Host key for {server.slug} ({host}) has changed. If the server was not "
+                    f"reinstalled, someone may be intercepting the connection."
+                ) from e
+            except paramiko.SSHException as e:
+                if "not found in known_hosts" in str(e):
+                    raise PermanentProvisioningError(
+                        f"Host key for {server.slug} ({host}) is not in known_hosts. Connect once "
+                        f"by hand as the bot's user to add it, or set SSH_KNOWN_HOSTS_PATH."
+                    ) from e
+                logger.error("ssh_connection_error", server=server.slug, error=str(e))
+                raise RetryableProvisioningError(f"SSH connection failed to {server.slug}: {e}") from e
+            except (TimeoutError, OSError) as e:
                 logger.error("ssh_connection_error", server=server.slug, error=str(e))
                 raise RetryableProvisioningError(f"SSH connection failed to {server.slug}: {e}") from e
             finally:

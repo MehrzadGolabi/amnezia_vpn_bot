@@ -3,6 +3,31 @@ set -euo pipefail
 
 echo "==> Setting up vpn-provisioner service account on AmneziaWG host"
 
+# Root installs these files as root programs and a sudoers rule. If anyone but root
+# can change them, or the folders above them, a break-in to the bot becomes root here.
+SRC_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+check_root_only() {
+    local owner mode
+    owner=$(stat -c %u "$1")
+    mode=$(stat -c %a "$1")
+    if [ "$owner" != 0 ] || (( 8#$mode & 8#022 )); then
+        echo "Refusing to install: $1 is owned by uid $owner with mode $mode."
+        echo "It must be owned by root and not writable by group or others. Fix it with:"
+        echo "    chown -R root:root /opt/amnezia_vpn_bot && chmod -R go-w /opt/amnezia_vpn_bot"
+        echo "then give vpn-provisioner its data folder back (see docs/OPERATIONS.md#updating)."
+        exit 1
+    fi
+}
+dir="$SRC_DIR"
+while :; do
+    check_root_only "$dir"
+    [ "$dir" = / ] && break
+    dir="$(dirname "$dir")"
+done
+for f in "$SRC_DIR"/*; do
+    check_root_only "$f"
+done
+
 command -v python3 >/dev/null || { echo "python3 is required for vpnctl"; exit 1; }
 command -v awg >/dev/null || echo "WARNING: awg not found. Install amneziawg-tools 3.1 first (see the migration guide)."
 

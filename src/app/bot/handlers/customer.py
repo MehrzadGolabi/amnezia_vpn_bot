@@ -1,3 +1,4 @@
+import html
 import uuid
 from typing import Any, Dict, Optional
 from aiogram import F, Router
@@ -90,7 +91,7 @@ async def callback_select_server(query: CallbackQuery, data: Dict[str, Any]):
     product_repo = ProductRepository(session)
 
     server = await server_repo.get_by_slug(server_slug)
-    if not server:
+    if not server or not server.enabled:
         await query.answer(get_text("server_not_found", lang), show_alert=True)
         return
 
@@ -110,7 +111,8 @@ async def callback_select_plan(query: CallbackQuery, data: Dict[str, Any], state
     parts = query.data.split("_")
     server = await ServerRepository(session).get_by_slug(parts[1])
     product = await ProductRepository(session).get_by_code(parts[2])
-    if not server or not product:
+    # Button data comes from the client, so check again what the menu only showed.
+    if not server or not server.enabled or not product or not product.enabled:
         await query.answer(get_text("invalid_selection", lang), show_alert=True)
         return
     await _start_order(query, data, state, server, product)
@@ -130,7 +132,7 @@ async def callback_select_renewal_plan(query: CallbackQuery, data: Dict[str, Any
         return
     server = await ServerRepository(session).get_by_id(sub.vpn_server_id)
     product = await ProductRepository(session).get_by_code(plan_code)
-    if not server or not product:
+    if not server or not product or not product.enabled:
         await query.answer(get_text("invalid_selection", lang), show_alert=True)
         return
     await _start_order(query, data, state, server, product, renews=sub)
@@ -236,7 +238,7 @@ async def handle_receipt_upload(message: Message, data: Dict[str, Any], state: F
             f"👤 <b>User:</b> <code>{user.telegram_user_id}</code> (@{user.username or 'N/A'})\n"
             f"💰 <b>Amount:</b> <code>{order.price_amount_snapshot} {order.currency_snapshot}</code>\n"
             f"{await _renewal_line(session, order)}"
-            f"📝 <b>Note:</b> {note or 'None'}\n\n"
+            f"📝 <b>Note:</b> {html.escape(note) if note else 'None'}\n\n"
             f"Action: Review via Admin Panel."
         )
         try:

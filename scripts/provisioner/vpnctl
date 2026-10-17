@@ -15,7 +15,7 @@ On-disk layout, shared with awg-add-client.sh / awg-del-client.sh:
                                      kept so a disabled client can be re-enabled
 
 Settings come from /etc/amnezia/vpnctl.conf (KEY=value lines), or the file named
-by $VPNCTL_CONFIG. See vpnctl.conf.example.
+by $VPNCTL_CONFIG when not run through sudo. See vpnctl.conf.example.
 """
 
 import argparse
@@ -112,7 +112,8 @@ def decode_vpn_url(vpn_url: str) -> str:
 
 def load_settings() -> dict:
     cfg = dict(DEFAULTS)
-    path = os.environ.get("VPNCTL_CONFIG", DEFAULT_CONFIG_PATH)
+    # Under sudo the caller chooses the environment, so only root's own config counts.
+    path = DEFAULT_CONFIG_PATH if "SUDO_USER" in os.environ else os.environ.get("VPNCTL_CONFIG", DEFAULT_CONFIG_PATH)
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             for line in f:

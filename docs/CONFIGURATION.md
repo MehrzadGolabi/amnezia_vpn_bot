@@ -50,7 +50,7 @@ Each location customers can buy is a group of `VPN_SERVER_<NAME>_*` settings. `<
 | `VPN_SERVER_<NAME>_PORT` | `22` | SSH port. |
 | `VPN_SERVER_<NAME>_USERNAME` | `vpn-provisioner` | SSH user. |
 | `VPN_SERVER_<NAME>_SSH_PRIVATE_KEY_PATH` | | SSH key, for example `/app/secrets/id_ed25519` in Docker. |
-| `VPN_SERVER_<NAME>_SSH_KNOWN_HOSTS_PATH` | | If set, the host key is checked against this file, for example `/home/vpn-provisioner/.ssh/known_hosts`. If not, any host key is accepted. |
+| `VPN_SERVER_<NAME>_SSH_KNOWN_HOSTS_PATH` | `~/.ssh/known_hosts` | The host key must be listed in this file, or the worker refuses to connect. Required in Docker, for example `/app/secrets/known_hosts`. |
 
 The server-side settings (endpoint, DNS, MTU) are in `/etc/amnezia/vpnctl.conf` on the VPN host. See [vpnctl](VPNCTL.md).
 

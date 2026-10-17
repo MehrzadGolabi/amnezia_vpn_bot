@@ -84,10 +84,24 @@ Without Docker:
 
 ```bash
 cd /opt/amnezia_vpn_bot
-sudo -u vpn-provisioner git pull
-sudo -u vpn-provisioner .venv/bin/pip install .
-sudo install -m 755 scripts/provisioner/vpnctl /usr/local/sbin/vpnctl
+sudo git pull
+sudo .venv/bin/pip install .
+sudo ./scripts/provisioner/install-provisioner.sh
 sudo systemctl restart vpnbot
+```
+
+Older versions of the setup guide made `vpn-provisioner` the owner of the whole folder. If `ls -ld /opt/amnezia_vpn_bot` shows `vpn-provisioner`, the installer will refuse to run. Fix it once before updating.
+
+Before running any `git` command as root, check that the service user didn't plant something that git would run: `cat .git/config` should show only the `core`, `remote "origin"` and `branch` sections, with no `hooksPath`, `fsmonitor` or other command, and `ls .git/hooks` should list only `*.sample` files. Then:
+
+```bash
+cd /opt/amnezia_vpn_bot
+sudo chown -R root:root .
+sudo chmod -R go-w .
+sudo chown -R vpn-provisioner:vpn-provisioner data
+sudo chown root:vpn-provisioner .env
+sudo chmod 640 .env
+sudo git status        # should show no changed files
 ```
 
 If the server still has the older three services (`vpnbot-bot`, `vpnbot-worker`, `vpnbot-scheduler`), replace them with the single `vpnbot` service once:
@@ -100,7 +114,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now vpnbot
 ```
 
-On each extra VPN host, run `git pull` in `/opt/amnezia_vpn_bot`, then `sudo ./scripts/provisioner/install-provisioner.sh`. It updates `vpnctl` and `vpnctl-ssh` and keeps `vpnctl.conf`. If the bot's key in `/home/vpn-provisioner/.ssh/authorized_keys` doesn't start with `restrict,from=...`, add that part as shown in [More servers](NATIVE_SETUP.md#more-servers).
+On each extra VPN host, run `sudo git pull` in `/opt/amnezia_vpn_bot`, then `sudo ./scripts/provisioner/install-provisioner.sh`. It updates `vpnctl` and `vpnctl-ssh` and keeps `vpnctl.conf`. If the bot's key in `/home/vpn-provisioner/.ssh/authorized_keys` doesn't start with `restrict,from=...`, add that part as shown in [More servers](NATIVE_SETUP.md#more-servers).
 
 With Docker, run `git pull`, then `docker compose up -d --build`. Copy the new `vpnctl` to each VPN host as well.
 
@@ -112,6 +126,9 @@ With Docker, run `git pull`, then `docker compose up -d --build`. Copy the new `
 | `sudo: a password is required` | `/etc/sudoers.d/vpn-provisioner` is missing, or the service isn't running as `vpn-provisioner`. |
 | `Unable to modify interface` | `awg-quick@awg1` is down. Start it, and the worker retries on its own. |
 | Client gets no handshake | Make sure the client app is 3.1 (AmneziaWG 3.1.x, AmneziaVPN 5.0.2.1+). Check `ENDPOINT_HOST` in `vpnctl.conf` and that ufw allows the port. |
+| `Host key for <server> ... is not in known_hosts` | Run the `ssh` test from [More servers](NATIVE_SETUP.md#more-servers) once as `vpn-provisioner` (with Docker, the one in [Docker setup](DOCKER_SETUP.md#2-ssh-key-for-the-worker)) to save the key. |
+| `Host key for <server> ... has changed` | If you reinstalled the server, remove its old line with `ssh-keygen -R <host>` as `vpn-provisioner` and connect once again. If you didn't, don't: something else is answering on that address. |
+| `Refusing to install: ... is owned by uid ...` | The folder must be owned by root. See [Updating](#updating). |
 | `SSH connection failed to <server>` | Run the `ssh` test from [More servers](NATIVE_SETUP.md#more-servers) as `vpn-provisioner` on the bot host. Check the Tailscale IP and `authorized_keys`. |
 | `vpnctl-ssh: command not allowed` | The bot sent a command the VPN host's `vpnctl-ssh` doesn't know. Update both to the same version. |
 | `database is locked` | Something else is holding the SQLite file, such as an open `sqlite3` shell. Close it. |
