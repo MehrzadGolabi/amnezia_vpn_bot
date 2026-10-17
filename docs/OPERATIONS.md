@@ -36,7 +36,7 @@ Renewing is a new order with a new config. It does not extend the old one.
 Without Docker:
 
 ```bash
-journalctl -u vpnbot-bot -u vpnbot-worker -u vpnbot-scheduler -f
+journalctl -u vpnbot -f
 ```
 
 With Docker:
@@ -84,7 +84,17 @@ cd /opt/amnezia_vpn_bot
 sudo -u vpn-provisioner git pull
 sudo -u vpn-provisioner .venv/bin/pip install .
 sudo install -m 755 scripts/provisioner/vpnctl /usr/local/sbin/vpnctl
-sudo systemctl restart vpnbot-bot vpnbot-worker vpnbot-scheduler
+sudo systemctl restart vpnbot
+```
+
+If the server still has the older three services (`vpnbot-bot`, `vpnbot-worker`, `vpnbot-scheduler`), replace them with the single `vpnbot` service once:
+
+```bash
+sudo systemctl disable --now vpnbot-bot vpnbot-worker vpnbot-scheduler
+sudo rm /etc/systemd/system/vpnbot-bot.service /etc/systemd/system/vpnbot-worker.service /etc/systemd/system/vpnbot-scheduler.service
+sudo cp deploy/systemd/vpnbot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now vpnbot
 ```
 
 On each extra VPN host, update `vpnctl` the same way: `git pull` in `/opt/amnezia_vpn_bot`, then the `install` line.
