@@ -33,6 +33,13 @@ if [ -f "$SCRIPT_SRC" ]; then
     echo "Installed /usr/local/sbin/vpnctl"
 fi
 
+# 3b. Forced command for the bot's SSH key
+WRAPPER_SRC="$(dirname "$0")/vpnctl-ssh"
+if [ -f "$WRAPPER_SRC" ]; then
+    install -m 755 -o root -g root "$WRAPPER_SRC" /usr/local/sbin/vpnctl-ssh
+    echo "Installed /usr/local/sbin/vpnctl-ssh"
+fi
+
 # 4. vpnctl settings (kept if they already exist)
 CONF_SRC="$(dirname "$0")/vpnctl.conf.example"
 if [ ! -f /etc/amnezia/vpnctl.conf ] && [ -f "$CONF_SRC" ]; then
@@ -46,6 +53,21 @@ if [ -f "$SUDOERS_SRC" ]; then
     visudo -cf "$SUDOERS_SRC" >/dev/null
     install -m 440 -o root -g root "$SUDOERS_SRC" /etc/sudoers.d/vpn-provisioner
     echo "Installed /etc/sudoers.d/vpn-provisioner"
+fi
+
+# 6. Limit SSH logins as vpn-provisioner to vpnctl-ssh
+SSHD_SRC="$(dirname "$0")/sshd-vpn-provisioner.conf"
+SSHD_DST=/etc/ssh/sshd_config.d/vpn-provisioner.conf
+if [ -f "$SSHD_SRC" ] && [ -d /etc/ssh/sshd_config.d ]; then
+    install -m 644 -o root -g root "$SSHD_SRC" "$SSHD_DST"
+    mkdir -p /run/sshd    # sshd -t needs it, and socket-activated ssh may not have made it yet
+    if sshd -t; then
+        systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+        echo "Installed $SSHD_DST"
+    else
+        rm -f "$SSHD_DST"
+        echo "WARNING: sshd rejected $SSHD_DST, so it was not installed"
+    fi
 fi
 
 echo "==> Provisioner setup complete. Verify with:"

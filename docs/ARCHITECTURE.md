@@ -44,3 +44,31 @@ Subscription: `provisioning` -> `active` -> `disabled` (expired, peer off) -> `e
 - With Docker, the SSH key is mounted read-only. Set `SSH_KNOWN_HOSTS_PATH` to have the host key checked. Without it, any host key is accepted.
 - Logs redact bot tokens, passwords and private keys.
 - `ThrottlingMiddleware` drops messages sent less than 0.5 s apart by the same user. `/block` suspends a user.
+
+### More than one server
+
+The bot host holds an SSH key that reaches `vpn-provisioner` on every other VPN host. On those hosts the key can only run `vpnctl` through `/usr/local/sbin/vpnctl-ssh`, which accepts the six commands the bot sends (create, disable, enable, remove, status, config) with checked arguments, and nothing else: no shell, file copy or port forwarding. `from=` in `authorized_keys` accepts the key only from the bot host's Tailscale IP.
+
+What a break-in can reach:
+
+- **Bot host:** the bot token, the database, and `vpnctl` on every server. The attacker can create, disable or remove customers and read their configs, but gets no shell or root on the other servers. Keep this host patched and backed up.
+- **Any other server:** only that server's own customers. It can't use the bot's key, and with the Tailscale policy below it can't open connections to the bot host or other servers. The bot checks its host key and treats what `vpnctl` returns as data.
+
+Tailscale allows every device to reach every other one by default. To stop a server from reaching the others, tag the servers in the Tailscale admin console (Machines, Edit ACL tags) and set a policy (Access controls) like this:
+
+```json
+{
+  "tagOwners": {
+    "tag:bot": ["autogroup:admin"],
+    "tag:vpn": ["autogroup:admin"]
+  },
+  "acls": [
+    {"action": "accept", "src": ["autogroup:admin"], "dst": ["*:*"]},
+    {"action": "accept", "src": ["tag:bot"], "dst": ["tag:vpn:22"]},
+    {"action": "accept", "src": ["autogroup:member"], "dst": ["autogroup:internet:*"]}
+  ]
+}
+```
+
+Tag the bot host `tag:bot` and the other VPN hosts `tag:vpn`. Your own devices keep full access, the bot host can reach only SSH on the VPN hosts, other people in the tailnet can use exit nodes but reach no machine, and the servers can't open connections to any machine in the tailnet. Before saving, use the policy editor's preview to check that family and friends' devices still have exit node access.
+

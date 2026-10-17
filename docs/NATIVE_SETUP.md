@@ -109,11 +109,14 @@ sudo -u vpn-provisioner ssh-keygen -t ed25519 -N '' -f /home/vpn-provisioner/.ss
 cat /home/vpn-provisioner/.ssh/id_ed25519.pub
 ```
 
-On the new server, add that public key:
+On the new server, add that public key, limited to the bot host's Tailscale IP and to `vpnctl`:
 
 ```bash
-echo '<the public key>' >> /home/vpn-provisioner/.ssh/authorized_keys
+echo 'restrict,from="<bot host tailscale IP>",command="/usr/local/sbin/vpnctl-ssh" <the public key>' \
+    >> /home/vpn-provisioner/.ssh/authorized_keys
 ```
+
+`restrict` turns off port forwarding, terminals and agent forwarding, `from` refuses the key from any other address, and `command` runs `vpnctl-ssh`, which allows only the `vpnctl` commands the bot sends. The installer also adds `/etc/ssh/sshd_config.d/vpn-provisioner.conf`, which applies the same limits to any key for this user. See [Security](ARCHITECTURE.md#more-than-one-server) for what this protects against.
 
 Back on the bot host, connect once. This saves the server's host key and checks that `vpnctl` runs. The output should be JSON with `"exists": false`.
 
