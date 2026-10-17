@@ -1,6 +1,6 @@
 # Running the bot without Docker
 
-The bot, worker and scheduler run as systemd services on one VPN host. The worker runs `vpnctl` on that host through sudo, and reaches any other VPN hosts over SSH. The database is one SQLite file.
+The bot, worker and scheduler run together as one systemd service, `vpnbot`, on one VPN host. The worker runs `vpnctl` on that host through sudo, and reaches any other VPN hosts over SSH. The database is one SQLite file.
 
 Run one bot only. A Telegram bot token can be used by one running bot at a time, so other servers are added to this bot (see [More servers](#more-servers)) instead of getting a bot of their own.
 
@@ -78,13 +78,13 @@ chmod 600 .env
 ## 4. Start
 
 ```bash
-cp deploy/systemd/vpnbot-*.service /etc/systemd/system/
+cp deploy/systemd/vpnbot.service /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now vpnbot-bot vpnbot-worker vpnbot-scheduler
-journalctl -u vpnbot-bot -u vpnbot-worker -u vpnbot-scheduler -f
+systemctl enable --now vpnbot
+journalctl -u vpnbot -f
 ```
 
-`vpnbot-bot` creates the database tables on first start, along with three default plans (1, 3 and 6 months, in EUR). To test the whole flow, send `/start` to the bot, place an order, and approve it from the admin chat. The config should arrive within a few seconds.
+`vpnbot` creates the database tables on first start, along with three default plans (1, 3 and 6 months, in EUR). To test the whole flow, send `/start` to the bot, place an order, and approve it from the admin chat. The config should arrive within a few seconds.
 
 ## More servers
 
@@ -134,7 +134,7 @@ VPN_SERVER_TR_1_SSH_KNOWN_HOSTS_PATH=/home/vpn-provisioner/.ssh/known_hosts
 ```
 
 ```bash
-systemctl restart vpnbot-bot vpnbot-worker vpnbot-scheduler
+systemctl restart vpnbot
 ```
 
 Customers now see both locations. To stop selling a location without touching existing customers, set its `ENABLED=false` and restart.

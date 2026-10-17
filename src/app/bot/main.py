@@ -77,17 +77,15 @@ async def init_data(session_factory, settings):
         )
 
 
-async def main():
-    settings = get_settings()
-    setup_logging(settings.LOG_LEVEL)
-
-    bot = Bot(
+def make_bot(settings) -> Bot:
+    return Bot(
         token=settings.TELEGRAM_BOT_TOKEN.get_secret_value(),
         default=DefaultBotProperties(parse_mode="HTML"),
     )
 
+
+async def build_dispatcher(session_factory, settings) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
-    session_factory = get_session_factory(settings)
 
     # Initialize servers & catalog data
     try:
@@ -113,6 +111,15 @@ async def main():
     dp.include_router(support_router)
     dp.include_router(admin_router)
     dp.include_router(fallback_router)
+    return dp
+
+
+async def main():
+    settings = get_settings()
+    setup_logging(settings.LOG_LEVEL)
+
+    bot = make_bot(settings)
+    dp = await build_dispatcher(get_session_factory(settings), settings)
 
     logger.info("telegram_bot_polling_started")
     try:

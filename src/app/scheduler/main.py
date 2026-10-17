@@ -11,6 +11,16 @@ from src.app.utils.logging import get_logger, setup_logging
 logger = get_logger("scheduler")
 
 
+def build_scheduler(session_factory, bot: Bot, settings) -> SchedulerService:
+    return SchedulerService(
+        session_factory=session_factory,
+        bot=bot,
+        reminder_days=settings.REMINDER_DAYS_BEFORE_EXPIRY,
+        peer_removal_grace_days=settings.PEER_REMOVAL_GRACE_DAYS,
+        interval_seconds=settings.EXPIRY_CHECK_INTERVAL_SECONDS,
+    )
+
+
 async def main():
     settings = get_settings()
     setup_logging(settings.LOG_LEVEL)
@@ -20,14 +30,7 @@ async def main():
         default=DefaultBotProperties(parse_mode="HTML"),
     )
 
-    session_factory = get_session_factory(settings)
-    service = SchedulerService(
-        session_factory=session_factory,
-        bot=bot,
-        reminder_days=settings.REMINDER_DAYS_BEFORE_EXPIRY,
-        peer_removal_grace_days=settings.PEER_REMOVAL_GRACE_DAYS,
-        interval_seconds=settings.EXPIRY_CHECK_INTERVAL_SECONDS,
-    )
+    service = build_scheduler(get_session_factory(settings), bot, settings)
 
     service.start()
 

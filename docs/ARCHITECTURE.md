@@ -12,6 +12,8 @@ Telegram  <-->  bot  ----writes---->  database  <----reads/writes----  scheduler
 - **scheduler** (`src/app/scheduler`) sends expiry reminders, and queues disable jobs at expiry and remove jobs after the grace period.
 - **vpnctl** (`scripts/provisioner/vpnctl`) is the only code that changes the VPN server. See [vpnctl](VPNCTL.md).
 
+Without Docker, `src/app/main.py` runs all three in one process and shares one Telegram connection. Each process that loads aiogram costs about 150 MB of RAM, so one process uses about a third of the memory of three. With Docker, each part has its own entry point (`src.app.bot.main`, `src.app.worker.main`, `src.app.scheduler.main`) and container.
+
 The database is SQLite without Docker, or Postgres with Docker. Migrations live in `src/app/db/migrations`.
 
 ## Job queue
