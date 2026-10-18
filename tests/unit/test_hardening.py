@@ -1,15 +1,11 @@
-"""Security checks: untrusted text in HTML messages, replies from VPN hosts, SSH host
-keys, throttling, forged button data and the provisioner installer."""
-import base64
-import json
+"""Security checks: untrusted text in HTML messages, log redaction, throttling,
+forged button data and the provisioner installer."""
 import os
 import subprocess
-import uuid
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import paramiko
 import pytest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
@@ -23,15 +19,9 @@ from src.app.bot.middleware.throttling_middleware import ThrottlingMiddleware
 from src.app.bot.states.support_states import SupportStates
 from src.app.config.settings import get_settings
 from src.app.db.models.base import Base
-from src.app.db.models.server import VPNServer
 from src.app.db.repositories.product_repo import ProductRepository
 from src.app.db.repositories.server_repo import ServerRepository
 from src.app.db.repositories.user_repo import UserRepository
-from src.app.integrations.provisioning.ssh_provisioner import (
-    PermanentProvisioningError,
-    SSHCommandProvisioner,
-)
-from src.app.utils.amnezia_codec import decode_vpn_url
 from src.app.utils.logging import redact_sensitive_text
 
 INSTALLER = Path(__file__).resolve().parents[2] / "scripts/provisioner/install-provisioner.sh"
@@ -51,12 +41,6 @@ async def session():
 @pytest.fixture
 def fsm_context():
     return FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=4242, user_id=4242))
-
-
-@pytest.fixture
-def remote_server():
-    return VPNServer(slug="tr-1", display_name="Turkey", country_code="TR", country_name="Turkey",
-                     host="100.64.0.2", ssh_port=22, ssh_username="vpn-provisioner")
 
 
 def callback(data):
@@ -99,54 +83,12 @@ async def test_worker_alerts_are_plain_text():
     assert worker.bot.send_message.call_args.kwargs["parse_mode"] is None
 
 
-# --- Replies from VPN hosts ---
-
-async def test_create_peer_builds_filename_and_link_itself(remote_server):
-    provisioner = SSHCommandProvisioner()
-    reply = json.dumps({
-        "peer_id": "user_1_abcd_tr-1",
-        "label": "user_1_abcd_tr-1",
-        "filename": "../../evil.exe",
-        "config_b64": base64.b64encode(CONFIG.encode()).decode(),
-        "vpn_url": "https://evil.example/phish",
-    })
-    with patch.object(provisioner, "_execute_remote_command", new=AsyncMock(return_value=(0, reply, ""))):
-        peer = await provisioner.create_peer(server=remote_server, subscription_id=uuid.uuid4(), telegram_user_id=1)
-    assert peer.config_filename == "user_1_abcd_tr-1.conf"
-    assert decode_vpn_url(peer.vpn_url) == CONFIG
-
+# --- Logs ---
 
 def test_logs_redact_configs_and_vpn_links():
     text = redact_sensitive_text('{"config_b64": "W0ludGVyZmFjZV0=", "vpn_url": "vpn://AAAAeJzLSM3JyQcABiwCFQ"}')
     assert "W0ludGVyZmFjZV0=" not in text
     assert "AAAAeJzLSM3JyQcABiwCFQ" not in text
-
-
-# --- SSH host keys ---
-
-def ssh_client_raising(exc):
-    client = MagicMock()
-    client.connect.side_effect = exc
-    return client
-
-
-async def test_ssh_never_accepts_unknown_host_keys(remote_server):
-    client = ssh_client_raising(paramiko.SSHException("Server '100.64.0.2' not found in known_hosts"))
-    with patch("paramiko.SSHClient", return_value=client):
-        with pytest.raises(PermanentProvisioningError, match="not in known_hosts"):
-            await SSHCommandProvisioner()._execute_remote_command(server=remote_server, command_args=["x"])
-    policy = client.set_missing_host_key_policy.call_args.args[0]
-    assert isinstance(policy, paramiko.RejectPolicy)
-    client.load_system_host_keys.assert_called_once()
-
-
-async def test_ssh_changed_host_key_is_permanent(remote_server):
-    key = MagicMock()
-    key.get_base64.return_value = "AAAA"
-    client = ssh_client_raising(paramiko.BadHostKeyException("100.64.0.2", key, key))
-    with patch("paramiko.SSHClient", return_value=client):
-        with pytest.raises(PermanentProvisioningError, match="has changed"):
-            await SSHCommandProvisioner()._execute_remote_command(server=remote_server, command_args=["x"])
 
 
 # --- Throttling ---
@@ -210,7 +152,7 @@ def run_installer(tmp_path, stat_output):
     # If the check ever stops working and the tests run as root, nothing on the
     # machine changes: every command the installer would use fails instead.
     for name in ("id", "useradd", "cp", "install", "mkdir", "chmod", "chown", "touch",
-                 "visudo", "sshd", "systemctl"):
+                 "systemctl", "sed"):
         stub = bin_dir / name
         stub.write_text("#!/bin/sh\nexit 99\n")
         stub.chmod(0o755)
@@ -230,19 +172,3 @@ def test_installer_refuses_files_others_can_change(tmp_path, stat_output):
     assert "Refusing to install" in result.stdout
     assert "Created user" not in result.stdout
 
-
-def test_vpnctl_ignores_config_path_under_sudo(tmp_path, monkeypatch):
-    import importlib.machinery
-    import importlib.util
-    path = str(Path(__file__).resolve().parents[2] / "scripts/provisioner/vpnctl")
-    loader = importlib.machinery.SourceFileLoader("vpnctl_mod", path)
-    vpnctl = importlib.util.module_from_spec(importlib.util.spec_from_loader("vpnctl_mod", loader))
-    loader.exec_module(vpnctl)
-
-    evil = tmp_path / "evil.conf"
-    evil.write_text("AWG_BIN=/tmp/evil\n")
-    monkeypatch.setattr(vpnctl, "DEFAULT_CONFIG_PATH", str(tmp_path / "missing.conf"))
-    monkeypatch.setenv("VPNCTL_CONFIG", str(evil))
-    assert vpnctl.load_settings()["AWG_BIN"] == "/tmp/evil"
-    monkeypatch.setenv("SUDO_USER", "vpn-provisioner")
-    assert vpnctl.load_settings()["AWG_BIN"] == "awg"

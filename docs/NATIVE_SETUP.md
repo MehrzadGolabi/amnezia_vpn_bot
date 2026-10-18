@@ -1,6 +1,6 @@
 # Running the bot without Docker
 
-The bot, worker and scheduler run together as one systemd service, `vpnbot`, on one VPN host. The worker runs `vpnctl` on that host through sudo, and reaches any other VPN hosts over SSH. The database is one SQLite file.
+The bot, worker and scheduler run together as one systemd service, `vpnbot`, on one VPN host. The worker asks `vpnctl` on that host through a Unix socket, and reaches any other VPN hosts over Tailscale. The database is one SQLite file.
 
 Run one bot only. A Telegram bot token can be used by one running bot at a time, so other servers are added to this bot (see [More servers](#more-servers)) instead of getting a bot of their own.
 
@@ -25,16 +25,20 @@ The services expect the venv at `/opt/amnezia_vpn_bot/.venv`.
 nano /etc/amnezia/vpnctl.conf        # set ENDPOINT_HOST to this server's public IP or hostname
 ```
 
-The installer adds `/usr/local/sbin/vpnctl`, `/etc/amnezia/vpnctl.conf`, the `vpn-provisioner` user, and a sudoers rule that lets that user run only `vpnctl`. The services run as `vpn-provisioner`. Running the installer again is safe and keeps your `vpnctl.conf`.
+The installer adds `/usr/local/sbin/vpnctl`, `/etc/amnezia/vpnctl.conf`, the `vpn-provisioner` user (no shell, no sudo), and `vpnctl.socket`, which lets that user ask `vpnctl` for the six things the bot needs. The bot runs as `vpn-provisioner`. Running the installer again is safe and keeps your `vpnctl.conf`.
 
-Check that it works:
+If `CONF_DIR` in `vpnctl.conf` isn't `/etc/amnezia/amneziawg`, run the installer again after changing it, so the sandbox lets `vpnctl` write there.
+
+Check that it works, first `vpnctl` itself, then through the socket the way the bot uses it:
 
 ```bash
-sudo -u vpn-provisioner sudo -n /usr/local/sbin/vpnctl create-peer \
-    --subscription-id $(cat /proc/sys/kernel/random/uuid) --label smoke-test
+vpnctl create-peer --subscription-id $(cat /proc/sys/kernel/random/uuid) --label smoke-test
 cat /etc/amnezia/amneziawg/clients/smoke-test.conf    # import into a 3.1 app and connect
-sudo -u vpn-provisioner sudo -n /usr/local/sbin/vpnctl remove-peer --peer-id smoke-test
+vpnctl remove-peer --peer-id smoke-test
+sudo -u vpn-provisioner vpnctl-check                 # "exit_code": 0 and "exists": false
 ```
+
+If `vpnctl-check` fails but `vpnctl` works, look at `journalctl -u 'vpnctl@*'`. A sandbox error there usually means the AmneziaWG control socket isn't where `vpnctl@.service` expects it: check `ls /run/amneziawg /run/wireguard`.
 
 ## 3. `.env`
 
@@ -51,7 +55,7 @@ TELEGRAM_BOT_TOKEN=<from @BotFather>
 ADMIN_TELEGRAM_IDS=<your Telegram user ID>
 ADMIN_CHAT_ID=<your user ID, or a group ID for receipts>
 DATABASE_URL=sqlite+aiosqlite:////opt/amnezia_vpn_bot/data/bot.db
-PROVISIONER_MODE=local
+PROVISIONER_MODE=vpnctl
 PAYMENT_INSTRUCTIONS_EN=...
 PAYMENT_INSTRUCTIONS_FA=...
 ```
@@ -91,40 +95,33 @@ journalctl -u vpnbot -f
 
 ## More servers
 
-Each extra VPN host needs AmneziaWG and `vpnctl`, but not the bot. The bot host reaches it over SSH as `vpn-provisioner`. Use the host's Tailscale IP so SSH does not have to be open to the internet.
+Each extra VPN host needs AmneziaWG and `vpnctl`, but not the bot. The bot reaches it over Tailscale, so nothing has to be open to the internet, and no SSH key or login account is involved.
 
-On the new server, with `awg-quick@awg1` running:
+Once, on the bot host, create the token the bot proves itself with, and print its hash for the other servers:
+
+```bash
+TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+echo "VPNCTL_TOKEN=$TOKEN" >> /opt/amnezia_vpn_bot/.env
+printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1     # the hash, for --token-sha256
+tailscale ip -4                                      # the bot host's Tailscale IP
+```
+
+Then on the new server, with `awg-quick@awg1` and Tailscale running:
 
 ```bash
 apt install -y git
 git clone https://github.com/MehrzadGolabi/amnezia_vpn_bot /opt/amnezia_vpn_bot
 cd /opt/amnezia_vpn_bot
-./scripts/provisioner/install-provisioner.sh
+./scripts/provisioner/install-provisioner.sh --tailnet <bot host tailscale IP> --token-sha256 <hash>
 nano /etc/amnezia/vpnctl.conf        # ENDPOINT_HOST = this server's public IP
 ```
 
-Run the smoke test from step 2 there as well.
+`vpnctl` now listens on this server's Tailscale address, port 7391, and answers only the bot host, and only with the token: the installer sets `ALLOWED_CLIENTS` and `CLIENT_TOKEN_SHA256` in `vpnctl.conf` and limits the socket to that address as well. The token itself never leaves the bot host's `.env`. Set up the Tailscale policy in [Security](ARCHITECTURE.md#how-the-bot-reaches-vpnctl) too, so other machines in your tailnet can't reach the port at all.
 
-On the bot host, create an SSH key for `vpn-provisioner` once:
-
-```bash
-sudo -u vpn-provisioner ssh-keygen -t ed25519 -N '' -f /home/vpn-provisioner/.ssh/id_ed25519
-cat /home/vpn-provisioner/.ssh/id_ed25519.pub
-```
-
-On the new server, add that public key, limited to the bot host's Tailscale IP and to `vpnctl`:
+Run the `vpnctl create-peer` smoke test from step 2 on the new server. Then, on the bot host, check that the bot can reach it. The output should be JSON with `"exists": false`:
 
 ```bash
-echo 'restrict,from="<bot host tailscale IP>",command="/usr/local/sbin/vpnctl-ssh" <the public key>' \
-    >> /home/vpn-provisioner/.ssh/authorized_keys
-```
-
-`restrict` turns off port forwarding, terminals and agent forwarding, `from` refuses the key from any other address, and `command` runs `vpnctl-ssh`, which allows only the `vpnctl` commands the bot sends. The installer also adds `/etc/ssh/sshd_config.d/vpn-provisioner.conf`, which applies the same limits to any key for this user. See [Security](ARCHITECTURE.md#more-than-one-server) for what this protects against.
-
-Back on the bot host, connect once. This saves the server's host key and checks that `vpnctl` runs. The output should be JSON with `"exists": false`. The worker trusts only the key saved here, so check the fingerprint `ssh` shows against the server's own (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server).
-
-```bash
-sudo -u vpn-provisioner ssh vpn-provisioner@<tailscale IP> sudo -n /usr/local/sbin/vpnctl peer-status --peer-id test
+sudo -u vpn-provisioner vpnctl-check <new server tailscale IP>
 ```
 
 Add a server group to `.env` and restart:
@@ -134,9 +131,7 @@ VPN_SERVER_TR_1_SLUG=tr-1
 VPN_SERVER_TR_1_COUNTRY_CODE=TR
 VPN_SERVER_TR_1_DISPLAY_NAME=Turkey
 VPN_SERVER_TR_1_ENABLED=true
-VPN_SERVER_TR_1_HOST=<tailscale IP>
-VPN_SERVER_TR_1_SSH_PRIVATE_KEY_PATH=/home/vpn-provisioner/.ssh/id_ed25519
-VPN_SERVER_TR_1_SSH_KNOWN_HOSTS_PATH=/home/vpn-provisioner/.ssh/known_hosts
+VPN_SERVER_TR_1_HOST=<new server tailscale IP>
 ```
 
 ```bash

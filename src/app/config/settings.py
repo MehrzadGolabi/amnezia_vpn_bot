@@ -8,8 +8,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class ProvisionerMode(str, Enum):
     MOCK = "mock"
-    SSH = "ssh"
-    LOCAL = "local"
+    VPNCTL = "vpnctl"
+
+
+# Older .env files say local or ssh; both now mean vpnctl.
+PROVISIONER_MODE_ALIASES = {"local": "vpnctl", "ssh": "vpnctl"}
+SERVER_FIELDS = {
+    "enabled", "slug", "country_code", "display_name", "host",
+    "vpnctl_port", "max_active_subscriptions",
+}
+# Settings from the SSH days. They are ignored, with a warning at startup.
+LEGACY_SERVER_FIELDS = {"port", "username", "ssh_private_key_path", "ssh_known_hosts_path"}
 
 
 class ServerConfig(BaseModel):
@@ -17,11 +26,10 @@ class ServerConfig(BaseModel):
     enabled: bool = True
     country_code: str
     display_name: str
+    # Empty or localhost: vpnctl on this host, through /run/vpnctl/vpnctl.sock.
+    # Anything else: the host's Tailscale address, where vpnctl listens on vpnctl_port.
     host: str = "localhost"
-    port: int = 22
-    username: str = "vpn-provisioner"
-    ssh_private_key_path: Optional[str] = None
-    ssh_known_hosts_path: Optional[str] = None
+    vpnctl_port: int = 7391
     max_active_subscriptions: Optional[int] = None
 
 
@@ -43,8 +51,13 @@ class Settings(BaseSettings):
     DATABASE_URL: SecretStr = SecretStr("postgresql+asyncpg://vpn_bot:vpn_bot@postgres:5432/vpn_bot")
 
     PROVISIONER_MODE: ProvisionerMode = ProvisionerMode.MOCK
-    # How vpnctl is invoked: on the VPN host over SSH (ssh mode) or as a local process (local mode).
-    VPNCTL_COMMAND: str = "sudo -n /usr/local/sbin/vpnctl"
+    # vpnctl on this host listens here (scripts/provisioner/systemd/vpnctl.socket).
+    VPNCTL_SOCKET: str = "/run/vpnctl/vpnctl.sock"
+    # Development only: run this command with `serve` instead of using the socket,
+    # for example against scripts/dev/sandbox.sh. Never set it in production.
+    VPNCTL_DEV_COMMAND: str = ""
+    # Sent to vpnctl on other VPN hosts, which keep only its SHA-256 (CLIENT_TOKEN_SHA256).
+    VPNCTL_TOKEN: SecretStr = SecretStr("")
     PROVISIONING_JOB_POLL_SECONDS: int = 5
     EXPIRY_CHECK_INTERVAL_SECONDS: int = 300
     REMINDER_DAYS_BEFORE_EXPIRY: Union[List[int], str] = Field(default_factory=lambda: [7, 3, 1])
@@ -55,6 +68,8 @@ class Settings(BaseSettings):
     PAYMENT_INSTRUCTIONS_FA: str = "لطفا هزینه را واریز نموده و تصویر یا فایل رسید را ارسال کنید."
 
     vpn_servers: Dict[str, ServerConfig] = Field(default_factory=dict)
+    # Old settings found in the environment that no longer do anything.
+    ignored_settings: List[str] = Field(default_factory=list)
 
     @field_validator("ADMIN_TELEGRAM_IDS", mode="before")
     @classmethod
@@ -84,7 +99,8 @@ class Settings(BaseSettings):
     @classmethod
     def parse_provisioner_mode(cls, v: Any) -> ProvisionerMode:
         if isinstance(v, str):
-            return ProvisionerMode(v.lower())
+            v = v.lower()
+            return ProvisionerMode(PROVISIONER_MODE_ALIASES.get(v, v))
         return v
 
     @model_validator(mode="before")
@@ -116,6 +132,9 @@ class Settings(BaseSettings):
                     source_dict[k] = v
 
         vpn_servers: Dict[str, Dict[str, Any]] = {}
+        ignored: List[str] = []
+        if "VPNCTL_COMMAND" in os.environ or (isinstance(data, dict) and "VPNCTL_COMMAND" in data):
+            ignored.append("VPNCTL_COMMAND")
         prefix = "VPN_SERVER_"
         for key, value in source_dict.items():
             if key.startswith(prefix):
@@ -124,16 +143,15 @@ class Settings(BaseSettings):
                 for i in range(1, len(parts)):
                     candidate_slug = "_".join(parts[:i]).lower().replace("_", "-")
                     field_name = "_".join(parts[i:]).lower()
-                    if field_name in {
-                        "enabled", "slug", "country_code", "display_name",
-                        "host", "port", "username", "ssh_private_key_path",
-                        "ssh_known_hosts_path", "max_active_subscriptions"
-                    }:
+                    if field_name in LEGACY_SERVER_FIELDS:
+                        ignored.append(key)
+                        break
+                    if field_name in SERVER_FIELDS:
                         server_dict = vpn_servers.setdefault(candidate_slug, {"slug": candidate_slug})
                         if field_name == "enabled":
                             server_dict[field_name] = str(value).lower() in ("true", "1", "yes")
-                        elif field_name == "port":
-                            server_dict[field_name] = int(value) if value else 22
+                        elif field_name == "vpnctl_port":
+                            server_dict[field_name] = int(value) if value else 7391
                         elif field_name == "max_active_subscriptions":
                             server_dict[field_name] = int(value) if value else None
                         else:
@@ -151,9 +169,10 @@ class Settings(BaseSettings):
             if isinstance(existing, dict):
                 final_servers.update(existing)
             data["vpn_servers"] = final_servers
+            data["ignored_settings"] = sorted(set(ignored))
             return data
         else:
-            return {"vpn_servers": final_servers}
+            return {"vpn_servers": final_servers, "ignored_settings": sorted(set(ignored))}
 
     def __repr__(self) -> str:
         return (

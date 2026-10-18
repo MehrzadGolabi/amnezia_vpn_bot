@@ -58,6 +58,6 @@ Try vpnctl directly:
   VPNCTL_CONFIG=$DIR/vpnctl.conf $REPO/scripts/provisioner/vpnctl create-peer --subscription-id \$(python3 -c 'import uuid;print(uuid.uuid4())') --label test1
 
 Or run the bot against it (add to .env, then make run-bot / run-worker / run-scheduler):
-  PROVISIONER_MODE=local
-  VPNCTL_COMMAND=env VPNCTL_CONFIG=$DIR/vpnctl.conf python3 $REPO/scripts/provisioner/vpnctl
+  PROVISIONER_MODE=vpnctl
+  VPNCTL_DEV_COMMAND=env VPNCTL_CONFIG=$DIR/vpnctl.conf python3 $REPO/scripts/provisioner/vpnctl
 MSG

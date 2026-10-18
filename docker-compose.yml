@@ -45,6 +45,10 @@ services:
     command: ["python", "-m", "src.app.bot.main"]
     env_file:
       - .env
+    # No vpnctl socket or token here: this container talks to Telegram, so it can't
+    # change VPN servers. Subscription screens show no data usage with Docker.
+    environment:
+      VPNCTL_TOKEN: ""
     deploy:
       resources:
         limits:
@@ -67,10 +71,13 @@ services:
     command: ["python", "-m", "src.app.worker.main"]
     env_file:
       - .env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    # vpnctl on this host (scripts/provisioner/systemd/vpnctl.socket). Other VPN hosts are
+    # reached over Tailscale through the Docker host. VPNCTL_GID is the vpn-provisioner
+    # group's ID on the host: getent group vpn-provisioner | cut -d: -f3
     volumes:
-      - ./secrets:/app/secrets:ro
+      - /run/vpnctl:/run/vpnctl
+    group_add:
+      - "${VPNCTL_GID:-1000}"
     deploy:
       resources:
         limits:

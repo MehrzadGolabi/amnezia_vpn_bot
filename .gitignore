@@ -22,3 +22,4 @@ __pycache__/
 .sandbox/
 fake-awg-state.json
 *.egg-info/
+build/

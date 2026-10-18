@@ -1,0 +1,19 @@
+# Requests from the bot on another host, over Tailscale. install-provisioner.sh
+# --tailnet fills in this host's Tailscale address and the bot host's.
+# vpnctl itself also refuses any caller not in ALLOWED_CLIENTS in vpnctl.conf.
+[Unit]
+Description=vpnctl requests from the bot over Tailscale
+After=tailscaled.service
+
+[Socket]
+ListenStream=@LISTEN@
+# Bind even if tailscale0 isn't up yet at boot.
+FreeBind=yes
+Accept=yes
+MaxConnections=16
+MaxConnectionsPerSource=4
+IPAddressDeny=any
+IPAddressAllow=@BOT_IP@
+
+[Install]
+WantedBy=sockets.target

@@ -1,17 +1,43 @@
 [Unit]
 Description=AmneziaWG VPN bot (Telegram bot, provisioning worker and scheduler)
-After=network-online.target awg-quick@awg1.service
-Wants=network-online.target
+After=network-online.target vpnctl.socket
+Wants=network-online.target vpnctl.socket
 
 [Service]
 User=vpn-provisioner
 Group=vpn-provisioner
 WorkingDirectory=/opt/amnezia_vpn_bot
-Environment=PYTHONPATH=/opt/amnezia_vpn_bot PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/amnezia_vpn_bot PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 ExecStartPre=/opt/amnezia_vpn_bot/.venv/bin/alembic upgrade head
 ExecStart=/opt/amnezia_vpn_bot/.venv/bin/python -m src.app.main
 Restart=on-failure
 RestartSec=5
+
+# The bot changes VPN servers only by asking vpnctl through its socket, so it needs
+# no privileges at all: it can write its database and reach the network, nothing else.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ReadWritePaths=/opt/amnezia_vpn_bot/data
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
