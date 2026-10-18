@@ -230,6 +230,12 @@ async def test_admin_actions_are_recorded(session):
     events = await audit_events(session)
     for event in ("order.approved", "order.rejected", "user.blocked", "user.unblocked"):
         assert (event, ADMIN_ID) in events, event
+    # Each action is recorded once, not by both the handler and the repository.
+    from sqlalchemy import func, select
+    from src.app.db.models.audit import AuditEvent
+    counts = dict((await session.execute(
+        select(AuditEvent.event_type, func.count()).group_by(AuditEvent.event_type))).all())
+    assert counts["order.approved"] == 1 and counts["order.rejected"] == 1
     assert {e for e, _ in events} & {"server.disabled", "server.paused", "server.enabled", "server.resumed"}
 
 
@@ -267,3 +273,48 @@ async def test_full_server_is_not_offered_and_cannot_be_ordered(session):
     menu = press("menu_buy")
     await callback_menu_buy(menu, data)
     assert "de-1" in str(menu.message.edit_text.call_args)
+
+
+async def test_retry_list_survives_a_blank_error(session):
+    _, job = await approved_subscription(session)
+    await JobRepository(session).mark_failed(job.id, "   \n  ", is_retryable=False)
+    await session.commit()
+    msg = command("/retry")
+    await cmd_retry(msg, {"session": session})
+    assert "no error saved" in msg.answer.call_args.args[0]
+
+
+async def test_renewing_a_removed_subscription_needs_room_but_a_live_one_does_not(session):
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+    from src.app.bot.handlers.customer import callback_select_renewal_plan
+
+    sub, _ = await approved_subscription(session)
+    sub = await SubscriptionRepository(session).get_by_id(sub.id)
+    sub.status = SubscriptionStatus.ACTIVE
+    sub.peer_external_id = "user_777_x_de-1"
+    server = await ServerRepository(session).get_by_slug("de-1")
+    server.max_active_subscriptions = 1   # full, with this very subscription
+    server.paused = True
+    await session.commit()
+    user = await UserRepository(session).get_by_telegram_id(777)
+    data = {"db_user": user, "session": session}
+
+    def state():
+        return FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=777, user_id=777))
+
+    # Still has its peer: renewing extends it, so pause and capacity don't apply.
+    live = state()
+    await callback_select_renewal_plan(press(f"rnw_{sub.id.hex}_vpn-1m"), data, live)
+    assert await live.get_state() is not None
+
+    # Peer removed after the grace period: renewing would make a new one.
+    sub.removed_at = utc_now()
+    sub.status = SubscriptionStatus.EXPIRED
+    await session.commit()
+    gone = state()
+    query = press(f"rnw_{sub.id.hex}_vpn-1m")
+    await callback_select_renewal_plan(query, data, gone)
+    assert await gone.get_state() is None
+    query.message.edit_text.assert_not_called()

@@ -10,7 +10,7 @@ from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
 from aiogram.types import CallbackQuery, Chat, Message, Update, User as TelegramUser
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from src.app.bot.handlers import admin_router, customer_router, fallback_router, support_router
+from src.app.bot.handlers import admin_jobs_router, admin_router, customer_router, fallback_router, support_router
 from src.app.bot.middleware.user_middleware import UserMiddleware
 from src.app.config.settings import get_settings
 from src.app.db.models.base import Base
@@ -54,6 +54,7 @@ def dispatcher():
     dp.include_router(customer_router)
     dp.include_router(support_router)
     dp.include_router(admin_router)
+    dp.include_router(admin_jobs_router)  # same order as src/app/bot/main.py
     dp.include_router(fallback_router)
     return dp
 
@@ -198,3 +199,34 @@ async def test_admin_extend_adds_days(env):
     assert after - before == timedelta(days=10)
     # The customer is told about the new expiry date.
     assert any(isinstance(c, SendMessage) and c.chat_id == CUSTOMER_ID + 3 for c in session.calls)
+
+
+async def test_retry_and_audit_reach_their_handlers(env):
+    from src.app.db.repositories.job_repo import JobRepository
+    dp, bot, session, factory = env
+    sub_id = await _active_subscription(factory, CUSTOMER_ID + 4)
+    async with factory() as s:
+        job = (await JobRepository(s).list_permanent_failures())  # none yet
+        assert job == []
+        from src.app.db.models.job import JobType
+        failed = await JobRepository(s).enqueue_job(JobType.REDELIVER_CONFIG, "subscription", sub_id, {})
+        await JobRepository(s).mark_failed(failed.id, "boom", is_retryable=False)
+        await s.commit()
+
+    session.calls.clear()
+    await send(dp, bot, ADMIN_ID, "/retry")
+    assert any(isinstance(c, SendMessage) and "failed for good" in c.text for c in session.calls)
+
+    session.calls.clear()
+    await press(dp, bot, ADMIN_ID, f"adm_rty_{failed.id.hex}")
+    answers = [c for c in session.calls if isinstance(c, AnswerCallbackQuery)]
+    assert answers and "Queued 1" in answers[-1].text
+
+    session.calls.clear()
+    await press(dp, bot, ADMIN_ID, "adm_rty_all")
+    answers = [c for c in session.calls if isinstance(c, AnswerCallbackQuery)]
+    assert answers and "No jobs have failed for good" in answers[-1].text
+
+    session.calls.clear()
+    await send(dp, bot, ADMIN_ID, "/audit")
+    assert any(isinstance(c, SendMessage) and "job.requeued" in c.text for c in session.calls)

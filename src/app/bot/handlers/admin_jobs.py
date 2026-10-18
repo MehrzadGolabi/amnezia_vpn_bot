@@ -84,7 +84,8 @@ async def _failed_list(session: AsyncSession) -> tuple:
     lines = [f"🚨 <b>Jobs that failed for good ({len(jobs)}{'+' if len(jobs) == 10 else ''})</b>\n"]
     buttons: List[List[InlineKeyboardButton]] = []
     for job in jobs:
-        error = html.escape((job.last_error or "").strip().splitlines()[0][:120]) if job.last_error else "no error saved"
+        first_line = (job.last_error or "").strip().splitlines()[:1]
+        error = html.escape(first_line[0][:120]) if first_line else "no error saved"
         lines.append(
             f"<code>{job.id.hex[:8]}</code> {job.job_type.value} · {_age(job.updated_at)}\n<i>{error}</i>"
         )
@@ -136,7 +137,7 @@ async def callback_retry(query: CallbackQuery, data: Dict[str, Any]):
     if skipped:
         summary += "\nSkipped:\n" + "\n".join(skipped[:10])
     if not jobs:
-        summary = "That job no longer exists."
+        summary = "No jobs have failed for good." if query.data == RETRY_ALL else "That job no longer exists."
     await query.answer(summary[:200], show_alert=True)
     if query.message and query.data == RETRY_ALL:
         text, kb = await _failed_list(session)

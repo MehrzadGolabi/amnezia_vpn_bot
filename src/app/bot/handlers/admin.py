@@ -177,10 +177,7 @@ async def callback_admin_approve_order(query: CallbackQuery, data: Dict[str, Any
         order_id=order.id,
         admin_telegram_id=query.from_user.id,
     )
-    if success:
-        await _audit(session, query.from_user.id, "order.approved", "order", order.id,
-                     order_code=order.public_order_code, subscription_id=str(sub.id) if sub else None)
-    await session.commit()
+    await session.commit()  # approve_order_atomic records order.approved itself
 
     if not success:
         await query.answer("Order was already approved", show_alert=True)
@@ -241,10 +238,7 @@ async def callback_admin_reject_order(query: CallbackQuery, data: Dict[str, Any]
         admin_telegram_id=query.from_user.id,
         reason=reason,
     )
-    if success and order:
-        await _audit(session, query.from_user.id, "order.rejected", "order", order.id,
-                     order_code=order.public_order_code)
-    await session.commit()
+    await session.commit()  # reject_order records order.rejected itself
 
     if not success or not order:
         await query.answer("Order could not be rejected", show_alert=True)

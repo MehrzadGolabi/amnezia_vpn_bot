@@ -137,11 +137,20 @@ async def callback_select_renewal_plan(query: CallbackQuery, data: Dict[str, Any
     if not sub or sub.user_id != user.id:
         await query.answer(get_text("subscription_not_found", lang), show_alert=True)
         return
-    server = await ServerRepository(session).get_by_id(sub.vpn_server_id)
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_id(sub.vpn_server_id)
     product = await ProductRepository(session).get_by_code(plan_code)
     if not server or not product or not product.enabled:
         await query.answer(get_text("invalid_selection", lang), show_alert=True)
         return
+    # Once its peer is gone, a renewal makes a new one, so it is a new sale like any other.
+    if sub.removed_at is not None or not sub.peer_external_id:
+        if not server.on_sale:
+            await query.answer(get_text("server_not_found", lang), show_alert=True)
+            return
+        if not await server_repo.has_room(server):
+            await query.answer(get_text("server_full", lang), show_alert=True)
+            return
     await _start_order(query, data, state, server, product, renews=sub)
 
 
