@@ -7,8 +7,9 @@
 #                                               on this host's Tailscale address and
 #                                               answers only <bot IP>, the bot host's
 #                                               Tailscale address
-#   ... --token-sha256 <hex>                    SHA-256 of the bot's VPNCTL_TOKEN; vpnctl
-#                                               refuses TCP callers without that token
+#   ... --token-sha256 <hex>[,<hex>]            SHA-256 of the bot's VPNCTL_TOKEN; vpnctl
+#                                               refuses TCP callers without that token.
+#                                               Two hashes while switching to a new token.
 #   ... --port <n>                              the Tailscale port (default 7391)
 #   ... --remove-ssh                            after the bot is updated: remove the old
 #                                               SSH and sudo setup (see docs/OPERATIONS.md)
@@ -64,8 +65,9 @@ command -v awg >/dev/null || echo "WARNING: awg not found. Install amneziawg-too
 if [ -n "$TAILNET_BOT_IP" ]; then
     python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' "$TAILNET_BOT_IP" 2>/dev/null \
         || { echo "--tailnet needs an IP address, got: $TAILNET_BOT_IP"; exit 2; }
-    if [ -n "$TOKEN_SHA256" ] && ! [[ "$TOKEN_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
-        echo "--token-sha256 must be 64 hex characters (sha256sum of the token)"; exit 2
+    # One hash, or several separated by commas while a new token is rolled out.
+    if [ -n "$TOKEN_SHA256" ] && ! [[ "$TOKEN_SHA256" =~ ^[0-9a-fA-F]{64}(,[0-9a-fA-F]{64})*$ ]]; then
+        echo "--token-sha256 must be 64 hex characters (sha256sum of the token), or several joined by commas"; exit 2
     fi
     command -v tailscale >/dev/null || { echo "tailscale is required for --tailnet"; exit 1; }
     LISTEN_IP="$(tailscale ip -4 | head -n1)"
