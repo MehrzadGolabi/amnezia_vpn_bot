@@ -185,3 +185,49 @@ async def test_failure_alert_has_a_retry_button():
     await worker._alert_admin("failed", retry_job_id=job_id)
     markup = worker.bot.send_message.call_args.kwargs["reply_markup"]
     assert markup.inline_keyboard[0][0].callback_data == f"{RETRY_PREFIX}{job_id.hex}"
+
+
+# --- Audit records for admin actions ---
+
+async def audit_events(session):
+    from sqlalchemy import select
+    from src.app.db.models.audit import AuditEvent
+    rows = (await session.execute(select(AuditEvent))).scalars().all()
+    return {(e.event_type, e.actor_telegram_user_id) for e in rows}
+
+
+async def test_admin_actions_are_recorded(session):
+    from src.app.bot.handlers.admin import (
+        callback_admin_approve_order, callback_admin_reject_order,
+        callback_admin_toggle_server, cmd_admin_block_user, cmd_admin_unblock_user,
+    )
+    user = await UserRepository(session).upsert_user(telegram_user_id=777, username="buyer")
+    server = await ServerRepository(session).create_or_update(
+        slug="de-1", display_name="Germany", country_code="DE", host="")
+    product = await ProductRepository(session).create_or_update(
+        code="vpn-1m", title="1 Month", duration_days=30, device_limit=1,
+        price_amount=Decimal("5.00"), price_currency="EUR")
+    order_repo = OrderRepository(session)
+    approve_me = await order_repo.create_order(user.id, server.id, product.id, product.price_amount, "EUR", "Pay")
+    reject_me = await order_repo.create_order(user.id, server.id, product.id, product.price_amount, "EUR", "Pay")
+    await session.commit()
+
+    data = {"session": session}
+    for handler, query_data in ((callback_admin_approve_order, f"adm_app_{approve_me.id}"),
+                                (callback_admin_reject_order, f"adm_rej_{reject_me.id}"),
+                                (callback_admin_toggle_server, f"adm_tgl_srv_{server.id}")):
+        query = press(query_data)
+        query.from_user = TelegramUser(id=ADMIN_ID, is_bot=False, first_name="A", username="boss")
+        query.bot = AsyncMock()
+        query.message.caption = None
+        query.message.html_text = "receipt"
+        query.message.edit_text = AsyncMock()
+        query.message.answer = AsyncMock()
+        await handler(query, data)
+    for handler, text in ((cmd_admin_block_user, "/block 777"), (cmd_admin_unblock_user, "/unblock 777")):
+        await handler(command(text), data)
+
+    events = await audit_events(session)
+    for event in ("order.approved", "order.rejected", "user.blocked", "user.unblocked"):
+        assert (event, ADMIN_ID) in events, event
+    assert {e for e, _ in events} & {"server.disabled", "server.paused", "server.enabled", "server.resumed"}

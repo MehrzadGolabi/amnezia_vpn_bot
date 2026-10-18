@@ -58,6 +58,19 @@ def is_admin(user_id: Optional[int]) -> bool:
         return False
 
 
+async def _audit(session: AsyncSession, admin_id: int, event_type: str, entity_type: str,
+                 entity_id: Optional[uuid.UUID] = None, **metadata: Any) -> None:
+    """Record an admin action. Call it before the action's commit, so both are saved or neither."""
+    await AuditRepository(session).record_event(
+        actor_type=ActorType.ADMIN,
+        actor_telegram_user_id=admin_id,
+        event_type=event_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        metadata=metadata,
+    )
+
+
 async def _dashboard(session: AsyncSession) -> Tuple[str, InlineKeyboardMarkup]:
     order_repo = OrderRepository(session)
     ticket_repo = TicketRepository(session)
@@ -164,6 +177,9 @@ async def callback_admin_approve_order(query: CallbackQuery, data: Dict[str, Any
         order_id=order.id,
         admin_telegram_id=query.from_user.id,
     )
+    if success:
+        await _audit(session, query.from_user.id, "order.approved", "order", order.id,
+                     order_code=order.public_order_code, subscription_id=str(sub.id) if sub else None)
     await session.commit()
 
     if not success:
@@ -217,6 +233,9 @@ async def callback_admin_reject_order(query: CallbackQuery, data: Dict[str, Any]
         admin_telegram_id=query.from_user.id,
         reason=reason,
     )
+    if success and order:
+        await _audit(session, query.from_user.id, "order.rejected", "order", order.id,
+                     order_code=order.public_order_code)
     await session.commit()
 
     if not success or not order:
@@ -443,6 +462,8 @@ async def callback_admin_toggle_server(query: CallbackQuery, data: Dict[str, Any
         return
 
     server.enabled = not server.enabled
+    await _audit(session, query.from_user.id, "server.enabled" if server.enabled else "server.disabled",
+                 "vpn_server", server.id, slug=server.slug)
     await session.commit()
 
     await query.answer(f"Server {server.slug} is now {'ENABLED' if server.enabled else 'DISABLED'}.", show_alert=True)
@@ -608,6 +629,7 @@ async def cmd_admin_block_user(message: Message, data: Dict[str, Any]):
         return
 
     user.is_blocked = True
+    await _audit(session, message.from_user.id, "user.blocked", "user", user.id, telegram_user_id=target_tg_id)
     await session.commit()
     await message.answer(f"🔒 User <code>{target_tg_id}</code> (@{user.username or 'N/A'}) has been suspended/blocked.", parse_mode="HTML")
 
@@ -632,5 +654,6 @@ async def cmd_admin_unblock_user(message: Message, data: Dict[str, Any]):
         return
 
     user.is_blocked = False
+    await _audit(session, message.from_user.id, "user.unblocked", "user", user.id, telegram_user_id=target_tg_id)
     await session.commit()
     await message.answer(f"🔓 User <code>{target_tg_id}</code> (@{user.username or 'N/A'}) has been unblocked.", parse_mode="HTML")
