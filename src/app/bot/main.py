@@ -106,6 +106,8 @@ async def build_dispatcher(session_factory, settings, provisioner=None) -> Dispa
     throttling_middleware = ThrottlingMiddleware(rate_limit_seconds=0.5)
 
     dp.message.outer_middleware(throttling_middleware)
+    # Button presses too: opening a subscription asks its VPN host for usage over SSH.
+    dp.callback_query.outer_middleware(ThrottlingMiddleware(rate_limit_seconds=0.5))
     dp.message.middleware(user_middleware)
     dp.callback_query.middleware(user_middleware)
 

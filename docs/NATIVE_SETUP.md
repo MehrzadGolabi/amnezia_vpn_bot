@@ -69,10 +69,13 @@ Delete any other `VPN_SERVER_*` lines, such as example groups from an older `.en
 
 Keep the token private. If it is ever posted somewhere, run `/revoke` in @BotFather and put the new one in `.env`.
 
+The code stays owned by root, and `vpn-provisioner` gets only the database folder and read access to `.env`. If the service user could change the code, a break-in to the bot would become root the next time you update, because root runs `install-provisioner.sh` from this folder.
+
 ```bash
 mkdir -p data
-chown -R vpn-provisioner:vpn-provisioner /opt/amnezia_vpn_bot
-chmod 600 .env
+chown -R vpn-provisioner:vpn-provisioner data
+chown root:vpn-provisioner .env
+chmod 640 .env
 ```
 
 ## 4. Start
@@ -118,7 +121,7 @@ echo 'restrict,from="<bot host tailscale IP>",command="/usr/local/sbin/vpnctl-ss
 
 `restrict` turns off port forwarding, terminals and agent forwarding, `from` refuses the key from any other address, and `command` runs `vpnctl-ssh`, which allows only the `vpnctl` commands the bot sends. The installer also adds `/etc/ssh/sshd_config.d/vpn-provisioner.conf`, which applies the same limits to any key for this user. See [Security](ARCHITECTURE.md#more-than-one-server) for what this protects against.
 
-Back on the bot host, connect once. This saves the server's host key and checks that `vpnctl` runs. The output should be JSON with `"exists": false`.
+Back on the bot host, connect once. This saves the server's host key and checks that `vpnctl` runs. The output should be JSON with `"exists": false`. The worker trusts only the key saved here, so check the fingerprint `ssh` shows against the server's own (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server).
 
 ```bash
 sudo -u vpn-provisioner ssh vpn-provisioner@<tailscale IP> sudo -n /usr/local/sbin/vpnctl peer-status --peer-id test

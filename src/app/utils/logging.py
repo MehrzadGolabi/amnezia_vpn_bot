@@ -11,6 +11,8 @@ SENSITIVE_PATTERNS = [
     (re.compile(r"-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]+?-----END [A-Z ]+ PRIVATE KEY-----"), "[REDACTED_PRIVATE_KEY]"),
     (re.compile(r"PrivateKey\s*=\s*[A-Za-z0-9+/=]+", re.IGNORECASE), "PrivateKey = [REDACTED]"),
     (re.compile(r"PresharedKey\s*=\s*[A-Za-z0-9+/=]+", re.IGNORECASE), "PresharedKey = [REDACTED]"),
+    (re.compile(r"\"config_b64\"\s*:\s*\"[^\"]*\"?"), '"config_b64": "[REDACTED]"'),
+    (re.compile(r"vpn://[A-Za-z0-9_-]+"), "vpn://[REDACTED]"),
     (re.compile(r"password=([^\s&]+)", re.IGNORECASE), "password=[REDACTED]"),
     (re.compile(r"://([^:]+):([^@]+)@", re.IGNORECASE), r"://\1:[REDACTED]@"),
 ]

@@ -1,3 +1,4 @@
+import html
 from typing import Any, Dict, Optional
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -84,7 +85,7 @@ async def handle_support_message(message: Message, data: Dict[str, Any], state: 
         admin_text = (
             f"📩 <b>Support Message:</b> <code>{active_ticket.public_ticket_code}</code>\n"
             f"👤 <b>From:</b> <code>{user.telegram_user_id}</code> (@{user.username or 'N/A'})\n\n"
-            f"{body_text}"
+            f"{html.escape(body_text)}"
         )
         admin_kb = InlineKeyboardMarkup(
             inline_keyboard=[[

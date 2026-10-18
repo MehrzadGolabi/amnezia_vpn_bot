@@ -255,7 +255,8 @@ class WorkerEngine:
     async def _alert_admin(self, message: str) -> None:
         if self.admin_chat_id:
             try:
-                await self.bot.send_message(chat_id=self.admin_chat_id, text=message)
+                # Plain text: the message can carry vpnctl's stderr from a remote host.
+                await self.bot.send_message(chat_id=self.admin_chat_id, text=message, parse_mode=None)
             except Exception as e:
                 logger.error("admin_alert_failed", error=str(e))
 
