@@ -112,7 +112,13 @@ if [ -z "$TAILNET_BOT_IP" ]; then
     systemctl restart vpnctl.socket
     echo "Listening on /run/vpnctl/vpnctl.sock for the vpn-provisioner group"
 else
-    # 2b. The bot runs elsewhere and connects over Tailscale.
+    # 2b. The bot runs elsewhere and connects over Tailscale. The bot host's local
+    #     socket is useless here, so remove it if an earlier run without --tailnet added it.
+    if [ -f "$UNITS/vpnctl.socket" ]; then
+        systemctl disable --now vpnctl.socket 2>/dev/null || true
+        rm -rf "$UNITS/vpnctl.socket" "$UNITS/vpnctl@.service" "$UNITS/vpnctl@.service.d"
+        echo "Removed the local vpnctl.socket, which only the bot host needs"
+    fi
     set_conf ALLOWED_CLIENTS "$TAILNET_BOT_IP"
     if [ -n "$TOKEN_SHA256" ]; then
         set_conf CLIENT_TOKEN_SHA256 "$(printf '%s' "$TOKEN_SHA256" | tr 'A-F' 'a-f')"

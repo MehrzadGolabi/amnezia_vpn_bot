@@ -223,3 +223,23 @@ def test_encode_reads_stdin_only(awg_sandbox):
     encoded = subprocess.run([sys.executable, str(VPNCTL), "encode"], input=CONFIG,
                              capture_output=True, text=True, check=True).stdout.strip()
     assert decode_vpn_url(encoded) == CONFIG
+
+
+def test_check_uses_the_last_token_like_the_bot(tmp_path, monkeypatch, capsys):
+    import importlib.machinery
+    import importlib.util
+    from tests.conftest import VPNCTL
+    path = str(VPNCTL.parent / "vpnctl-check")
+    loader = importlib.machinery.SourceFileLoader("vpnctl_check", path)
+    check = importlib.util.module_from_spec(importlib.util.spec_from_loader("vpnctl_check", loader))
+    loader.exec_module(check)
+
+    env = tmp_path / ".env"
+    env.write_text("VPNCTL_TOKEN=old\nOTHER=x\nVPNCTL_TOKEN='new'\n")
+    monkeypatch.setattr(check, "ENV_FILE", str(env))
+    monkeypatch.delenv("VPNCTL_TOKEN", raising=False)
+    assert check.token() == "new"
+    assert "2 VPNCTL_TOKEN lines" in capsys.readouterr().err
+
+    from dotenv import dotenv_values
+    assert dotenv_values(env)["VPNCTL_TOKEN"] == "new"  # what the bot reads
