@@ -114,7 +114,7 @@ async def test_server_and_product_repository(session: AsyncSession):
         enabled=True,
     )
 
-    servers = await server_repo.list_enabled()
+    servers = await server_repo.list_on_sale()
     assert len(servers) == 1
     assert servers[0].slug == "de-1"
     assert servers[0].display_name == "Germany Frankfurt"
@@ -128,8 +128,14 @@ async def test_server_and_product_repository(session: AsyncSession):
     count = await server_repo.count_active_subscriptions(server.id)
     assert count == 0
 
-    await server_repo.set_enabled("de-1", False)
-    assert len(await server_repo.list_enabled()) == 0
+    await server_repo.set_paused("de-1", True)
+    assert len(await server_repo.list_on_sale()) == 0
+
+    # Reloading servers from .env at startup keeps the pause.
+    await server_repo.create_or_update(slug="de-1", display_name="Germany Frankfurt",
+                                       country_code="DE", enabled=True)
+    assert (await server_repo.get_by_slug("de-1")).paused is True
+    assert len(await server_repo.list_on_sale()) == 0
 
     products = await product_repo.list_enabled()
     assert len(products) == 1

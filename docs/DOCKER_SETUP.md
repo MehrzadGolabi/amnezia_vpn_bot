@@ -1,4 +1,6 @@
-# Running the bot with Docker
+# Running the bot with Docker (legacy)
+
+**Docker is no longer maintained.** This guide, `docker-compose.yml` and the `Dockerfile` are kept as they were and get no new features or fixes, so they may not match the current code. Use [the systemd setup](NATIVE_SETUP.md) instead.
 
 The bot, worker, scheduler and Postgres run in containers. They ask `vpnctl` on the Docker host through its Unix socket, mounted into the containers, and reach other VPN hosts over Tailscale through the Docker host. On a single VPS, [running without Docker](NATIVE_SETUP.md) is simpler.
 

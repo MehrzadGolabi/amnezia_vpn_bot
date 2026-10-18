@@ -72,7 +72,8 @@ async def test_admin_servers_listing_and_toggle(session: AsyncSession):
     assert query.answer.call_count >= 1
 
     updated_server = await server_repo.get_by_id(server.id)
-    assert updated_server.enabled is False
+    assert updated_server.paused is True
+    assert updated_server.enabled is True  # .env's setting is left alone
 
 
 @pytest.mark.asyncio

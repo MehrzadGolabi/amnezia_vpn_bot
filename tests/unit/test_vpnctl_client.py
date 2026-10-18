@@ -243,3 +243,59 @@ def test_check_uses_the_last_token_like_the_bot(tmp_path, monkeypatch, capsys):
 
     from dotenv import dotenv_values
     assert dotenv_values(env)["VPNCTL_TOKEN"] == "new"  # what the bot reads
+
+
+# --- Token rotation and the Tailscale tag check ---
+
+async def test_either_of_two_token_hashes_is_accepted(awg_sandbox, remote_port):
+    new = "next-token"
+    awg_sandbox.allow_clients("127.0.0.1", f"{TOKEN_SHA256},{hashlib.sha256(new.encode()).hexdigest()}")
+    for token in (TOKEN, new):
+        status = await VpnctlProvisioner(dev_command="", token=token).get_peer_status(
+            server=REMOTE, peer_external_id="nobody")
+        assert status.raw_status and "exists" in status.raw_status
+    with pytest.raises(PermanentProvisioningError, match="token"):
+        await VpnctlProvisioner(dev_command="", token="old-and-gone").disable_peer(
+            server=REMOTE, peer_external_id="nobody")
+
+
+def fake_tailscale(tmp_path, tags=None, fail=False):
+    """A stand-in for `tailscale` that answers whois and notes that it was called."""
+    script = tmp_path / "fake-tailscale"
+    called = tmp_path / "whois-called"
+    body = 'echo "tailscaled not running" >&2; exit 1' if fail else \
+        f"echo '{json.dumps({'Node': {'Name': 'de.', 'Tags': tags or []}, 'UserProfile': {}})}'"
+    script.write_text(f"#!/bin/sh\ntouch {called}\n{body}\n")
+    script.chmod(0o755)
+    return str(script), called
+
+
+@pytest.mark.parametrize("tags,outcome", [
+    (["tag:bot"], None),
+    (["tag:vpn"], PermanentProvisioningError),
+    ([], PermanentProvisioningError),
+])
+async def test_required_tailscale_tag(awg_sandbox, remote_port, tmp_path, tags, outcome):
+    script, _ = fake_tailscale(tmp_path, tags=tags)
+    awg_sandbox.allow_clients("127.0.0.1", TOKEN_SHA256, REQUIRED_TAILSCALE_TAGS="tag:bot", TAILSCALE_BIN=script)
+    prov = VpnctlProvisioner(dev_command="", token=TOKEN)
+    if outcome is None:
+        await prov.disable_peer(server=REMOTE, peer_external_id="nobody")
+    else:
+        with pytest.raises(outcome, match="needs one of"):
+            await prov.disable_peer(server=REMOTE, peer_external_id="nobody")
+
+
+async def test_whois_failure_is_retryable_not_permanent(awg_sandbox, remote_port, tmp_path):
+    script, _ = fake_tailscale(tmp_path, fail=True)
+    awg_sandbox.allow_clients("127.0.0.1", TOKEN_SHA256, REQUIRED_TAILSCALE_TAGS="tag:bot", TAILSCALE_BIN=script)
+    with pytest.raises(RetryableProvisioningError, match="whois"):
+        await VpnctlProvisioner(dev_command="", token=TOKEN).disable_peer(server=REMOTE, peer_external_id="x")
+
+
+async def test_whois_is_not_run_for_a_caller_without_the_token(awg_sandbox, remote_port, tmp_path):
+    script, called = fake_tailscale(tmp_path, tags=["tag:bot"])
+    awg_sandbox.allow_clients("127.0.0.1", TOKEN_SHA256, REQUIRED_TAILSCALE_TAGS="tag:bot", TAILSCALE_BIN=script)
+    with pytest.raises(PermanentProvisioningError, match="token"):
+        await VpnctlProvisioner(dev_command="", token="guess").disable_peer(server=REMOTE, peer_external_id="x")
+    assert not called.exists()

@@ -58,6 +58,19 @@ def is_admin(user_id: Optional[int]) -> bool:
         return False
 
 
+async def _audit(session: AsyncSession, admin_id: int, event_type: str, entity_type: str,
+                 entity_id: Optional[uuid.UUID] = None, **metadata: Any) -> None:
+    """Record an admin action. Call it before the action's commit, so both are saved or neither."""
+    await AuditRepository(session).record_event(
+        actor_type=ActorType.ADMIN,
+        actor_telegram_user_id=admin_id,
+        event_type=event_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        metadata=metadata,
+    )
+
+
 async def _dashboard(session: AsyncSession) -> Tuple[str, InlineKeyboardMarkup]:
     order_repo = OrderRepository(session)
     ticket_repo = TicketRepository(session)
@@ -75,6 +88,8 @@ async def _dashboard(session: AsyncSession) -> Tuple[str, InlineKeyboardMarkup]:
         f"• <code>/user &lt;telegram_id&gt;</code> - Lookup User Details\n"
         f"• <code>/block &lt;telegram_id&gt;</code> - Suspend User\n"
         f"• <code>/unblock &lt;telegram_id&gt;</code> - Unsuspend User\n"
+        f"• <code>/retry</code> - Retry Jobs That Failed For Good\n"
+        f"• <code>/audit</code> - Latest Admin And System Actions\n"
     )
 
     kb = InlineKeyboardMarkup(
@@ -162,7 +177,7 @@ async def callback_admin_approve_order(query: CallbackQuery, data: Dict[str, Any
         order_id=order.id,
         admin_telegram_id=query.from_user.id,
     )
-    await session.commit()
+    await session.commit()  # approve_order_atomic records order.approved itself
 
     if not success:
         await query.answer("Order was already approved", show_alert=True)
@@ -180,7 +195,15 @@ async def callback_admin_approve_order(query: CallbackQuery, data: Dict[str, Any
         except Exception:
             pass
 
-    await query.answer("Order approved! Outbox provisioning job enqueued.", show_alert=True)
+    approved_msg = "Order approved! Outbox provisioning job enqueued."
+    server = await ServerRepository(session).get_by_id(order.vpn_server_id)
+    is_new_peer = sub is not None and sub.order_id == order.id
+    if is_new_peer and server and server.max_active_subscriptions:
+        count = await ServerRepository(session).count_active_subscriptions(server.id)
+        if count > server.max_active_subscriptions:
+            # The order was placed while there was room; a paid order isn't refused.
+            approved_msg += f"\n\nNote: {server.slug} is now over capacity ({count}/{server.max_active_subscriptions})."
+    await query.answer(approved_msg[:200], show_alert=True)
 
     # Notify Customer
     user = await user_repo.get_by_id(order.user_id)
@@ -215,7 +238,7 @@ async def callback_admin_reject_order(query: CallbackQuery, data: Dict[str, Any]
         admin_telegram_id=query.from_user.id,
         reason=reason,
     )
-    await session.commit()
+    await session.commit()  # reject_order records order.rejected itself
 
     if not success or not order:
         await query.answer("Order could not be rejected", show_alert=True)
@@ -405,16 +428,27 @@ async def cmd_admin_servers(event: Any, data: Dict[str, Any]):
     text = f"🌐 <b>VPN Servers Management ({len(servers)} total)</b>\n\n"
     buttons = []
     for s in servers:
-        status_emoji = "🟢" if s.enabled else "🔴"
         active_count = await server_repo.count_active_subscriptions(s.id)
         cap = s.max_active_subscriptions or "∞"
+        if not s.enabled:
+            state = "🔴 off in .env"
+        elif s.paused:
+            state = "⏸ paused"
+        elif not await server_repo.has_room(s):
+            state = "🟠 full"
+        else:
+            state = "🟢 on sale"
         text += (
-            f"{status_emoji} <b>{s.display_name}</b> (<code>{s.slug}</code>)\n"
+            f"{state} · <b>{s.display_name}</b> (<code>{s.slug}</code>)\n"
             f"Host: <code>{s.host or 'this host'}</code> | Country: {s.country_code}\n"
             f"Active Peers: <code>{active_count}/{cap}</code>\n\n"
         )
-        toggle_label = f"🔴 Disable {s.slug}" if s.enabled else f"🟢 Enable {s.slug}"
-        buttons.append([InlineKeyboardButton(text=toggle_label, callback_data=f"adm_tgl_srv_{s.id}")])
+        # A server turned off in .env can only be turned on there.
+        if s.enabled:
+            label = f"▶️ Resume {s.slug}" if s.paused else f"⏸ Pause {s.slug}"
+            buttons.append([InlineKeyboardButton(text=label, callback_data=f"adm_tgl_srv_{s.id}")])
+
+    text += "Pause stops new orders and stays paused after a restart. Renewals still work."
 
     buttons.append(BACK_TO_DASHBOARD)
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -440,10 +474,16 @@ async def callback_admin_toggle_server(query: CallbackQuery, data: Dict[str, Any
         await query.answer("Server not found", show_alert=True)
         return
 
-    server.enabled = not server.enabled
+    if not server.enabled:
+        await query.answer(f"{server.slug} is turned off in .env. Turn it on there.", show_alert=True)
+        return
+
+    server.paused = not server.paused
+    await _audit(session, query.from_user.id, "server.paused" if server.paused else "server.resumed",
+                 "vpn_server", server.id, slug=server.slug)
     await session.commit()
 
-    await query.answer(f"Server {server.slug} is now {'ENABLED' if server.enabled else 'DISABLED'}.", show_alert=True)
+    await query.answer(f"{server.slug} is now {'paused' if server.paused else 'on sale'}.", show_alert=True)
     await cmd_admin_servers(query, data)
 
 
@@ -606,6 +646,7 @@ async def cmd_admin_block_user(message: Message, data: Dict[str, Any]):
         return
 
     user.is_blocked = True
+    await _audit(session, message.from_user.id, "user.blocked", "user", user.id, telegram_user_id=target_tg_id)
     await session.commit()
     await message.answer(f"🔒 User <code>{target_tg_id}</code> (@{user.username or 'N/A'}) has been suspended/blocked.", parse_mode="HTML")
 
@@ -630,5 +671,6 @@ async def cmd_admin_unblock_user(message: Message, data: Dict[str, Any]):
         return
 
     user.is_blocked = False
+    await _audit(session, message.from_user.id, "user.unblocked", "user", user.id, telegram_user_id=target_tg_id)
     await session.commit()
     await message.answer(f"🔓 User <code>{target_tg_id}</code> (@{user.username or 'N/A'}) has been unblocked.", parse_mode="HTML")

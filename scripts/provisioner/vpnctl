@@ -58,6 +58,8 @@ DEFAULTS = {
     "PERSISTENT_KEEPALIVE": "25",
     "ALLOWED_CLIENTS": "",
     "CLIENT_TOKEN_SHA256": "",
+    "REQUIRED_TAILSCALE_TAGS": "",
+    "TAILSCALE_BIN": "tailscale",
 }
 # Every obfuscation line in the server's [Interface] is copied into client configs,
 # exactly like awg-add-client.sh, so the values that must match (H1-H4, S1-S4,
@@ -528,13 +530,36 @@ def check_caller(sock, cfg: dict, request) -> None:
             allowed.add(ipaddress.ip_address(part.strip()))
     if peer not in allowed:
         raise Refused(f"{peer} is not in ALLOWED_CLIENTS")
-    expected = cfg["CLIENT_TOKEN_SHA256"].strip().lower()
+    # Several hashes may be listed while a new token is being rolled out.
+    expected = [h.strip().lower() for h in cfg["CLIENT_TOKEN_SHA256"].split(",") if h.strip()]
     token = request.get("token") if isinstance(request, dict) else None
     if not expected:
         raise Refused("CLIENT_TOKEN_SHA256 is not set, so no TCP caller is accepted")
-    if not isinstance(token, str) or not hmac.compare_digest(
-            hashlib.sha256(token.encode("utf-8")).hexdigest(), expected):
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest() if isinstance(token, str) else ""
+    if not any([hmac.compare_digest(digest, h) for h in expected]):
         raise Refused("Wrong or missing token")
+    check_tailscale_tags(peer, cfg)
+
+
+def check_tailscale_tags(peer, cfg: dict) -> None:
+    """With REQUIRED_TAILSCALE_TAGS set, the caller's Tailscale node must carry one of
+    them. Runs only after the address and token checks, so strangers can't make vpnctl
+    start tailscale. If whois itself fails the request is refused as retryable (exit 1),
+    so a tailscaled hiccup doesn't fail a paid order for good."""
+    required = {t.strip() for t in cfg["REQUIRED_TAILSCALE_TAGS"].split(",") if t.strip()}
+    if not required:
+        return
+    try:
+        res = subprocess.run([*shlex.split(cfg["TAILSCALE_BIN"]), "whois", "--json", str(peer)],
+                             capture_output=True, text=True, timeout=5)
+        if res.returncode != 0:
+            raise VpnctlError(f"tailscale whois failed: {res.stderr.strip() or res.stdout.strip()}")
+        node = json.loads(res.stdout).get("Node") or {}
+        tags = set(node.get("Tags") or [])
+    except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired) as e:
+        raise VpnctlError(f"Could not check the caller with tailscale whois: {e}")
+    if not tags & required:
+        raise Refused(f"{peer} has Tailscale tags {sorted(tags) or 'none'}, needs one of {sorted(required)}")
 
 
 def read_request(sock) -> dict:

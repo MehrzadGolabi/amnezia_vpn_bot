@@ -8,16 +8,14 @@ It has three parts:
 - `worker`: creates, disables and removes clients by calling `vpnctl` on the VPN server.
 - `scheduler`: sends reminders and queues expiry jobs.
 
-Without Docker they run together in one process (`python -m src.app.main`, about 200 MB of RAM). With Docker each runs in its own container.
+They run together in one process (`python -m src.app.main`, about 200 MB of RAM) under systemd.
 
 The VPN server is a native `amneziawg-go` + `awg-quick@awg1` setup. `vpnctl` edits `/etc/amnezia/amneziawg/awg1.conf` in the same format as `awg-add-client.sh`, so you can keep adding your own clients with that script.
 
 ## Setup
 
-- [Without Docker](docs/NATIVE_SETUP.md): systemd services on the VPN host with SQLite. This is the simplest option.
-- [With Docker](docs/DOCKER_SETUP.md): containers with Postgres, reaching the VPN host over SSH.
-
-Both need the AmneziaWG 3.1 server running first.
+- [Setup](docs/NATIVE_SETUP.md): one systemd service on a VPN host, with SQLite, and more VPN hosts over Tailscale. It needs the AmneziaWG 3.1 server running first.
+- [Docker](docs/DOCKER_SETUP.md): legacy and no longer maintained. It may not match the current code.
 
 ## Docs
 

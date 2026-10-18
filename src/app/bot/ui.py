@@ -1,7 +1,16 @@
 from typing import Optional
 
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+
+# Button data for /retry and the worker's failure alerts (handled in handlers/admin_jobs.py).
+RETRY_PREFIX = "adm_rty_"
+
+
+def retry_button(job_id) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔁 Retry", callback_data=f"{RETRY_PREFIX}{job_id.hex}"),
+    ]])
 
 
 async def show(query: CallbackQuery, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
