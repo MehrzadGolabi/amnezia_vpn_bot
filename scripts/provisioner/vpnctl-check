@@ -18,14 +18,19 @@ ENV_FILE = "/opt/amnezia_vpn_bot/.env"
 def token() -> str:
     if os.environ.get("VPNCTL_TOKEN"):
         return os.environ["VPNCTL_TOKEN"]
+    found = []
     try:
         with open(ENV_FILE, encoding="utf-8") as f:
             for line in f:
                 if line.startswith("VPNCTL_TOKEN="):
-                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+                    found.append(line.split("=", 1)[1].strip().strip('"').strip("'"))
     except OSError:
         pass
-    return ""
+    if len(found) > 1:
+        print(f"warning: {ENV_FILE} has {len(found)} VPNCTL_TOKEN lines; the bot uses the last one, "
+              "and so does this check. Keep one, shared by every VPN host.", file=sys.stderr)
+    # The last line wins, as it does for the bot (python-dotenv).
+    return found[-1] if found else ""
 
 
 def main(argv):
