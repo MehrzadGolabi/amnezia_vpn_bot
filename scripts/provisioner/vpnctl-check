@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Ask vpnctl for the status of a client that doesn't exist, the way the bot does.
+
+    vpnctl-check                   through /run/vpnctl/vpnctl.sock on this host
+    vpnctl-check <host> [port]     over Tailscale to another VPN host (port 7391)
+
+Prints vpnctl's answer. "exists": false means the connection and vpnctl work.
+"""
+import json
+import socket
+import sys
+
+REQUEST = json.dumps({"command": "peer-status", "args": {"peer_id": "vpnctl-check"}}).encode() + b"\n"
+
+
+def main(argv):
+    if argv:
+        sock = socket.create_connection((argv[0], int(argv[1]) if len(argv) > 1 else 7391), timeout=15)
+    else:
+        sock = socket.socket(socket.AF_UNIX)
+        sock.settimeout(15)
+        sock.connect("/run/vpnctl/vpnctl.sock")
+    with sock:
+        sock.sendall(REQUEST)
+        sock.shutdown(socket.SHUT_WR)
+        out = b""
+        while chunk := sock.recv(65536):
+            out += chunk
+    print(out.decode().strip())
+    return 0 if json.loads(out).get("exit_code") == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

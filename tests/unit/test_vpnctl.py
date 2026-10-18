@@ -4,9 +4,12 @@ import json
 import os
 import re
 import stat
-import tempfile
+import subprocess
+import sys
 import time
 import uuid
+
+from tests.conftest import VPNCTL
 
 OBFUSCATION_KEYS = [
     "Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3",
@@ -187,9 +190,8 @@ def test_missing_server_config_is_an_error(awg_sandbox):
 
 def test_encode_decode_cli(awg_sandbox):
     content = "[Interface]\nAddress = 10.66.66.5/32\nPrivateKey = 12345\n\n[Peer]\nPublicKey = abcde\n"
-    with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".conf") as f:
-        f.write(content)
-    vpn_url = awg_sandbox.vpnctl("encode", "-i", f.name).stdout.strip()
+    vpn_url = subprocess.run([sys.executable, str(VPNCTL), "encode"], input=content,
+                             capture_output=True, text=True, check=True).stdout.strip()
     assert vpn_url.startswith("vpn://")
     res = awg_sandbox.vpnctl("decode", "-u", vpn_url)
     assert res.returncode == 0

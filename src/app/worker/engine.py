@@ -18,7 +18,7 @@ from src.app.db.repositories.server_repo import ServerRepository
 from src.app.db.repositories.subscription_repo import SubscriptionRepository
 from src.app.db.repositories.user_repo import UserRepository
 from src.app.integrations.provisioning.base import VPNProvisioner
-from src.app.integrations.provisioning.ssh_provisioner import (
+from src.app.integrations.provisioning.vpnctl_client import (
     PermanentProvisioningError,
     RetryableProvisioningError,
 )

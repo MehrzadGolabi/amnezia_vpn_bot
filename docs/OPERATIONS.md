@@ -114,32 +114,55 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now vpnbot
 ```
 
-On each extra VPN host, run `sudo git pull` in `/opt/amnezia_vpn_bot`, then `sudo ./scripts/provisioner/install-provisioner.sh`. It updates `vpnctl` and `vpnctl-ssh` and keeps `vpnctl.conf`. If the bot's key in `/home/vpn-provisioner/.ssh/authorized_keys` doesn't start with `restrict,from=...`, add that part as shown in [More servers](NATIVE_SETUP.md#more-servers).
+On each extra VPN host, run `sudo git pull` in `/opt/amnezia_vpn_bot`, then the installer with the same options as when you set it up (`--tailnet <bot host tailscale IP>`). It updates `vpnctl` and the systemd units and keeps `vpnctl.conf`.
 
 With Docker, run `git pull`, then `docker compose up -d --build`. On each VPN host, update the root-owned clone and run the installer as above. A clone in a user's home folder must be moved to `/opt/amnezia_vpn_bot` (`sudo git clone`), because the installer refuses to run from a folder that user can change.
 
-Since this version the worker checks every VPN host's SSH key. Docker setups made with an older guide have no `secrets/known_hosts`, so every job would fail. Before `docker compose up`, save each host's key and point every server group at the file (see [Docker setup](DOCKER_SETUP.md#2-ssh-key-for-the-worker)):
+### Moving from SSH and sudo to vpnctl sockets
 
-```bash
-ssh -i secrets/id_ed25519 -o UserKnownHostsFile=secrets/known_hosts vpn-provisioner@<host> sudo -n /usr/local/sbin/vpnctl peer-status --peer-id test
-```
+Older versions ran `vpnctl` through sudo, and reached other VPN hosts over SSH. Switch over in this order, so provisioning keeps working at every step. The installer only adds things until step 4.
 
-```ini
-VPN_SERVER_DE_1_SSH_KNOWN_HOSTS_PATH=/app/secrets/known_hosts
-```
+1. **Each extra VPN host:** update the clone, then start the Tailscale listener. The old SSH access keeps working meanwhile.
+
+   ```bash
+   cd /opt/amnezia_vpn_bot && sudo git pull
+   sudo ./scripts/provisioner/install-provisioner.sh --tailnet <bot host tailscale IP>
+   ```
+
+2. **Tailscale policy:** add `tag:vpn:7391` for `tag:bot`, next to the old `tag:vpn:22` (see [Security](ARCHITECTURE.md#how-the-bot-reaches-vpnctl)). On the bot host, `sudo -u vpn-provisioner vpnctl-check <tailscale IP>` should now answer for every extra host.
+
+3. **Bot host:** update, install the socket and the new service file, and change `.env`.
+
+   ```bash
+   cd /opt/amnezia_vpn_bot
+   sudo git pull
+   sudo .venv/bin/pip install .
+   sudo ./scripts/provisioner/install-provisioner.sh
+   sudo cp deploy/systemd/vpnbot.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo -u vpn-provisioner vpnctl-check
+   ```
+
+   In `.env`, set `PROVISIONER_MODE=vpnctl`, delete `VPNCTL_COMMAND`, and delete every server's `PORT`, `USERNAME`, `SSH_PRIVATE_KEY_PATH` and `SSH_KNOWN_HOSTS_PATH`. Keep `HOST` (the Tailscale IP). If you used a port other than 7391, set `VPN_SERVER_<NAME>_VPNCTL_PORT`. Then `sudo systemctl restart vpnbot`. The log names any old setting it still finds (`ignored_setting`). Approve a test order, or open a subscription's page, to see each server answer.
+
+4. **Clean up**, on the bot host and then every extra host. This deletes the sudoers rule, `vpnctl-ssh`, the sshd drop-in, the bot's SSH key and `authorized_keys`, and turns off logins for `vpn-provisioner`:
+
+   ```bash
+   sudo ./scripts/provisioner/install-provisioner.sh --remove-ssh                       # bot host
+   sudo ./scripts/provisioner/install-provisioner.sh --tailnet <bot IP> --remove-ssh    # extra hosts
+   ```
+
+   Then remove `tag:vpn:22` for `tag:bot` from the Tailscale policy.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| Order approved but no config arrives | Worker log. A `vpnctl` error there names the cause. Run the same `vpnctl` command by hand as `vpn-provisioner`. |
-| `sudo: a password is required` | `/etc/sudoers.d/vpn-provisioner` is missing, or the service isn't running as `vpn-provisioner`. |
+| Order approved but no config arrives | Worker log. A `vpnctl` error there names the cause. `sudo -u vpn-provisioner vpnctl-check [<tailscale IP>]` tests the same path the bot uses, and `journalctl -u 'vpnctl@*' -u 'vpnctl-tailnet@*'` on the VPN host shows `vpnctl`'s side. |
+| `Cannot reach vpnctl on <server>` | On this host: is `vpnctl.socket` running (`systemctl status vpnctl.socket`), and is the bot running as `vpn-provisioner`? On another host: is `vpnctl-tailnet.socket` running there, is Tailscale up on both, and does the Tailscale policy allow `tag:bot` to `tag:vpn:7391`? |
+| `<IP> is not in ALLOWED_CLIENTS` | The VPN host doesn't know the bot host's Tailscale IP. Run the installer there again with `--tailnet <bot host tailscale IP>`. |
 | `Unable to modify interface` | `awg-quick@awg1` is down. Start it, and the worker retries on its own. |
 | Client gets no handshake | Make sure the client app is 3.1 (AmneziaWG 3.1.x, AmneziaVPN 5.0.2.1+). Check `ENDPOINT_HOST` in `vpnctl.conf` and that ufw allows the port. |
-| `Host key for <server> ... is not in known_hosts` | Run the `ssh` test from [More servers](NATIVE_SETUP.md#more-servers) once as `vpn-provisioner` (with Docker, the one in [Docker setup](DOCKER_SETUP.md#2-ssh-key-for-the-worker)) to save the key. |
-| `Host key for <server> ... has changed` | If you reinstalled the server, remove its old line with `ssh-keygen -R <host>` as `vpn-provisioner` and connect once again. If you didn't, don't: something else is answering on that address. |
-| Jobs failed for good while a host key was missing | Once the key is saved, queue them again. Without Docker: `sudo -u vpn-provisioner sqlite3 /opt/amnezia_vpn_bot/data/bot.db "UPDATE provisioning_jobs SET status = 'pending', attempt_count = 0 WHERE status = 'permanent_failure' AND last_error LIKE '%known_hosts%';"`. With Docker, run the same `UPDATE` through `docker compose exec -T postgres psql -U vpn_bot vpn_bot -c "..."`. Paid orders then get their configs. |
+| Jobs failed for good while a server was unreachable | Once it answers `vpnctl-check` again, queue them again. Without Docker: `sudo -u vpn-provisioner sqlite3 /opt/amnezia_vpn_bot/data/bot.db "UPDATE provisioning_jobs SET status = 'pending', attempt_count = 0 WHERE status = 'permanent_failure';"`. With Docker, run the same `UPDATE` through `docker compose exec -T postgres psql -U vpn_bot vpn_bot -c "..."`. Paid orders then get their configs. |
 | `Refusing to install: ... is owned by uid ...` | The folder must be owned by root. See [Updating](#updating). |
-| `SSH connection failed to <server>` | Run the `ssh` test from [More servers](NATIVE_SETUP.md#more-servers) as `vpn-provisioner` on the bot host. Check the Tailscale IP and `authorized_keys`. |
-| `vpnctl-ssh: command not allowed` | The bot sent a command the VPN host's `vpnctl-ssh` doesn't know. Update both to the same version. |
 | `database is locked` | Something else is holding the SQLite file, such as an open `sqlite3` shell. Close it. |

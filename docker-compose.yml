@@ -45,6 +45,11 @@ services:
     command: ["python", "-m", "src.app.bot.main"]
     env_file:
       - .env
+    # Reads data usage from vpnctl for the subscription screens.
+    volumes:
+      - /run/vpnctl:/run/vpnctl
+    group_add:
+      - "${VPNCTL_GID:-65534}"
     deploy:
       resources:
         limits:
@@ -67,10 +72,13 @@ services:
     command: ["python", "-m", "src.app.worker.main"]
     env_file:
       - .env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    # vpnctl on this host (scripts/provisioner/systemd/vpnctl.socket). Other VPN hosts are
+    # reached over Tailscale through the Docker host. VPNCTL_GID is the vpn-provisioner
+    # group's ID on the host: getent group vpn-provisioner | cut -d: -f3
     volumes:
-      - ./secrets:/app/secrets:ro
+      - /run/vpnctl:/run/vpnctl
+    group_add:
+      - "${VPNCTL_GID:-65534}"
     deploy:
       resources:
         limits:

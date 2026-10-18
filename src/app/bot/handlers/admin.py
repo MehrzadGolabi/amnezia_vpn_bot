@@ -410,7 +410,7 @@ async def cmd_admin_servers(event: Any, data: Dict[str, Any]):
         cap = s.max_active_subscriptions or "∞"
         text += (
             f"{status_emoji} <b>{s.display_name}</b> (<code>{s.slug}</code>)\n"
-            f"Host: <code>{s.host}:{s.ssh_port}</code> | Country: {s.country_code}\n"
+            f"Host: <code>{s.host or 'this host'}</code> | Country: {s.country_code}\n"
             f"Active Peers: <code>{active_count}/{cap}</code>\n\n"
         )
         toggle_label = f"🔴 Disable {s.slug}" if s.enabled else f"🟢 Enable {s.slug}"

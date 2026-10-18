@@ -18,10 +18,11 @@ from src.app.db.repositories.product_repo import ProductRepository
 from src.app.db.repositories.server_repo import ServerRepository
 from src.app.db.repositories.subscription_repo import SubscriptionRepository
 from src.app.db.repositories.user_repo import UserRepository
-from src.app.integrations.provisioning.ssh_provisioner import (
-    LocalCommandProvisioner,
+from src.app.integrations.provisioning import vpnctl_client
+from src.app.integrations.provisioning.vpnctl_client import (
     PermanentProvisioningError,
     RetryableProvisioningError,
+    VpnctlProvisioner,
 )
 from src.app.utils.amnezia_codec import decode_vpn_url
 from src.app.worker.engine import WorkerEngine
@@ -44,7 +45,7 @@ def server():
 
 
 async def test_local_provisioner_lifecycle(awg_sandbox, server):
-    prov = LocalCommandProvisioner(vpnctl_command=awg_sandbox.vpnctl_command)
+    prov = VpnctlProvisioner(dev_command=awg_sandbox.vpnctl_command)
     sub_id = uuid.uuid4()
 
     peer = await prov.create_peer(server=server, subscription_id=sub_id, telegram_user_id=42)
@@ -73,11 +74,11 @@ async def test_local_provisioner_lifecycle(awg_sandbox, server):
 
 async def test_local_provisioner_error_classes(awg_sandbox, server):
     awg_sandbox.server_conf.unlink()
-    prov = LocalCommandProvisioner(vpnctl_command=awg_sandbox.vpnctl_command)
+    prov = VpnctlProvisioner(dev_command=awg_sandbox.vpnctl_command)
     with pytest.raises(RetryableProvisioningError, match="Server config not found"):
         await prov.create_peer(server=server, subscription_id=uuid.uuid4(), telegram_user_id=1)
 
-    missing = LocalCommandProvisioner(vpnctl_command="/nonexistent/vpnctl")
+    missing = VpnctlProvisioner(dev_command="/nonexistent/vpnctl")
     with pytest.raises(PermanentProvisioningError):
         await missing.disable_peer(server=server, peer_external_id="x")
 
@@ -96,7 +97,7 @@ async def test_worker_provisions_and_expires_on_sandbox(awg_sandbox, session):
     bot = AsyncMock()
     worker = WorkerEngine(
         session_factory=lambda: session,
-        provisioner=LocalCommandProvisioner(vpnctl_command=awg_sandbox.vpnctl_command),
+        provisioner=VpnctlProvisioner(dev_command=awg_sandbox.vpnctl_command),
         bot=bot,
     )
     assert await worker.run_single_batch() == 1
@@ -124,20 +125,24 @@ async def test_worker_provisions_and_expires_on_sandbox(awg_sandbox, session):
     assert list(awg_sandbox.clients.iterdir()) == []
 
 
-async def test_local_mode_reaches_other_hosts_over_ssh(awg_sandbox, server):
-    prov = LocalCommandProvisioner(vpnctl_command=awg_sandbox.vpnctl_command)
-    prov._ssh._execute_remote_command = AsyncMock(return_value=(0, '{"peers": []}', ""))
-    remote = VPNServer(slug="tr-1", display_name="Turkey", country_code="TR", host="100.64.0.2")
+async def test_other_hosts_are_reached_over_tcp(awg_sandbox, server, monkeypatch):
+    prov = VpnctlProvisioner(dev_command=awg_sandbox.vpnctl_command)
+    calls = []
 
-    await prov._vpnctl(remote, "peer-status", "--peer-id", "x")
-    prov._ssh._execute_remote_command.assert_awaited_once()
-    assert prov._ssh._execute_remote_command.await_args.kwargs["server"] is remote
+    async def fake_open_connection(host, port):
+        calls.append((host, port))
+        raise OSError("no route")
+
+    monkeypatch.setattr(vpnctl_client.asyncio, "open_connection", fake_open_connection)
+    remote = VPNServer(slug="tr-1", display_name="Turkey", country_code="TR", host="100.64.0.2")
+    with pytest.raises(RetryableProvisioningError, match="no route"):
+        await prov.disable_peer(server=remote, peer_external_id="x")
+    assert calls == [("100.64.0.2", 7391)]
 
     # The server with no remote HOST still runs vpnctl on this machine.
-    prov._ssh._execute_remote_command.reset_mock()
     await prov.create_peer(server=server, subscription_id=uuid.uuid4(), telegram_user_id=7)
-    prov._ssh._execute_remote_command.assert_not_awaited()
     assert len(awg_sandbox.live_peers()) == 1
+    assert len(calls) == 1
 
 
 async def test_renewal_extends_the_same_peer(awg_sandbox, session):
@@ -154,7 +159,7 @@ async def test_renewal_extends_the_same_peer(awg_sandbox, session):
 
     worker = WorkerEngine(
         session_factory=lambda: session,
-        provisioner=LocalCommandProvisioner(vpnctl_command=awg_sandbox.vpnctl_command),
+        provisioner=VpnctlProvisioner(dev_command=awg_sandbox.vpnctl_command),
         bot=AsyncMock(),
     )
     assert await worker.run_single_batch() == 1

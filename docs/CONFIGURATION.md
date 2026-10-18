@@ -21,8 +21,10 @@ All settings live in `.env` in the repository root. Start from `.env.example`.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `PROVISIONER_MODE` | `mock` | `local` runs `vpnctl` on this machine for servers without a `HOST`, and over SSH for servers with one (no Docker). `ssh` runs it on every server over SSH (Docker). `mock` makes fake configs, for trying the bot without a server. |
-| `VPNCTL_COMMAND` | `sudo -n /usr/local/sbin/vpnctl` | How `vpnctl` is called. Change it only for the test sandbox. |
+| `PROVISIONER_MODE` | `mock` | `vpnctl` manages real servers: through `VPNCTL_SOCKET` for servers without a `HOST`, and over Tailscale for servers with one. `mock` makes fake configs, for trying the bot without a server. The old values `local` and `ssh` mean `vpnctl`. |
+| `VPNCTL_SOCKET` | `/run/vpnctl/vpnctl.sock` | Where `vpnctl` on this host listens. |
+| `VPNCTL_DEV_COMMAND` | | Development only: run this command with `serve` instead of using the socket, for the test sandbox (see [vpnctl](VPNCTL.md#testing-without-a-vps)). |
+| `VPNCTL_GID` | | Docker only: the `vpn-provisioner` group's ID on the host, so the containers can use the socket. |
 | `PROVISIONING_JOB_POLL_SECONDS` | `5` | How often the worker checks for new jobs. |
 
 ## Subscriptions
@@ -46,11 +48,10 @@ Each location customers can buy is a group of `VPN_SERVER_<NAME>_*` settings. `<
 | `VPN_SERVER_<NAME>_COUNTRY_CODE` | | Two-letter code, such as `DE`. |
 | `VPN_SERVER_<NAME>_ENABLED` | `true` | `false` hides it from new orders. |
 | `VPN_SERVER_<NAME>_MAX_ACTIVE_SUBSCRIPTIONS` | none | Capacity shown in `/servers`. It is displayed only and does not stop sales. |
-| `VPN_SERVER_<NAME>_HOST` | `localhost` | SSH host. In `local` mode, leave it out (or `localhost`) for the bot's own server. |
-| `VPN_SERVER_<NAME>_PORT` | `22` | SSH port. |
-| `VPN_SERVER_<NAME>_USERNAME` | `vpn-provisioner` | SSH user. |
-| `VPN_SERVER_<NAME>_SSH_PRIVATE_KEY_PATH` | | SSH key, for example `/app/secrets/id_ed25519` in Docker. |
-| `VPN_SERVER_<NAME>_SSH_KNOWN_HOSTS_PATH` | `~/.ssh/known_hosts` | The host key must be listed in this file, or the worker refuses to connect. Required in Docker, for example `/app/secrets/known_hosts`. |
+| `VPN_SERVER_<NAME>_HOST` | `localhost` | Leave it out for the server the bot runs on. For another VPN host, its Tailscale IP. |
+| `VPN_SERVER_<NAME>_VPNCTL_PORT` | `7391` | The port `vpnctl` listens on at that Tailscale IP (`install-provisioner.sh --port`). |
+
+`PORT`, `USERNAME`, `SSH_PRIVATE_KEY_PATH` and `SSH_KNOWN_HOSTS_PATH` are left over from SSH. They are ignored, and the log warns about them at startup, so you can delete them.
 
 The server-side settings (endpoint, DNS, MTU) are in `/etc/amnezia/vpnctl.conf` on the VPN host. See [vpnctl](VPNCTL.md).
 

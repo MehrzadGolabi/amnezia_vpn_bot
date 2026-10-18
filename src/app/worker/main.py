@@ -8,7 +8,7 @@ from src.app.config.settings import ProvisionerMode, get_settings
 from src.app.db.session import get_session_factory
 from src.app.integrations.provisioning.base import VPNProvisioner
 from src.app.integrations.provisioning.mock_provisioner import MockProvisioner
-from src.app.integrations.provisioning.ssh_provisioner import LocalCommandProvisioner, SSHCommandProvisioner
+from src.app.integrations.provisioning.vpnctl_client import VpnctlProvisioner
 from src.app.utils.logging import get_logger, setup_logging
 from src.app.worker.engine import WorkerEngine
 
@@ -16,10 +16,11 @@ logger = get_logger("worker")
 
 
 def build_provisioner(settings) -> VPNProvisioner:
-    if settings.PROVISIONER_MODE == ProvisionerMode.SSH:
-        return SSHCommandProvisioner(vpnctl_command=settings.VPNCTL_COMMAND)
-    if settings.PROVISIONER_MODE == ProvisionerMode.LOCAL:
-        return LocalCommandProvisioner(vpnctl_command=settings.VPNCTL_COMMAND)
+    for name in settings.ignored_settings:
+        logger.warning("ignored_setting", setting=name,
+                       reason="vpnctl no longer uses SSH or sudo; see docs/OPERATIONS.md#updating")
+    if settings.PROVISIONER_MODE == ProvisionerMode.VPNCTL:
+        return VpnctlProvisioner(socket_path=settings.VPNCTL_SOCKET, dev_command=settings.VPNCTL_DEV_COMMAND)
     return MockProvisioner()
 
 

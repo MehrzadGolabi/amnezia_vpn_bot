@@ -2,10 +2,15 @@
 """
 vpnctl: manage AmneziaWG clients on a native amneziawg-go + awg-quick server.
 
-Called by the bot over SSH (or locally) as `sudo -n /usr/local/sbin/vpnctl <command>`.
-Every command prints one JSON object on stdout. Errors go to stderr with a
-non-zero exit code: 2 for bad input, 3 for an unknown client (neither is worth
-retrying), 1 for anything else.
+The bot never runs it directly. systemd starts `vpnctl serve` as root for each
+connection to its sockets (see scripts/provisioner/systemd/): the Unix socket
+/run/vpnctl/vpnctl.sock on this host, and optionally a port on the Tailscale
+address for a bot on another host. `serve` reads one JSON request, runs one of
+the six commands below, and writes one JSON response.
+
+Run by hand, every command prints one JSON object on stdout. Errors go to stderr
+with a non-zero exit code: 2 for bad input, 3 for an unknown client (neither is
+worth retrying), 4 for a caller that isn't allowed, 1 for anything else.
 
 On-disk layout, shared with awg-add-client.sh / awg-del-client.sh:
   <CONF_DIR>/<INTERFACE>.conf        server config; each client is a [Peer] block
@@ -15,7 +20,7 @@ On-disk layout, shared with awg-add-client.sh / awg-del-client.sh:
                                      kept so a disabled client can be re-enabled
 
 Settings come from /etc/amnezia/vpnctl.conf (KEY=value lines), or the file named
-by $VPNCTL_CONFIG when not run through sudo. See vpnctl.conf.example.
+by $VPNCTL_CONFIG. See vpnctl.conf.example.
 """
 
 import argparse
@@ -27,6 +32,8 @@ import json
 import os
 import re
 import shlex
+import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -47,6 +54,7 @@ DEFAULTS = {
     "CLIENT_MTU": "1280",
     "CLIENT_ALLOWED_IPS": "0.0.0.0/0, ::/0",
     "PERSISTENT_KEEPALIVE": "25",
+    "ALLOWED_CLIENTS": "",
 }
 # Every obfuscation line in the server's [Interface] is copied into client configs,
 # exactly like awg-add-client.sh, so the values that must match (H1-H4, S1-S4,
@@ -70,6 +78,10 @@ class InvalidInput(VpnctlError):
 
 class NotFound(VpnctlError):
     exit_code = 3
+
+
+class Refused(VpnctlError):
+    exit_code = 4
 
 
 def validate_identifier(name: str, value: str) -> str:
@@ -112,8 +124,7 @@ def decode_vpn_url(vpn_url: str) -> str:
 
 def load_settings() -> dict:
     cfg = dict(DEFAULTS)
-    # Under sudo the caller chooses the environment, so only root's own config counts.
-    path = DEFAULT_CONFIG_PATH if "SUDO_USER" in os.environ else os.environ.get("VPNCTL_CONFIG", DEFAULT_CONFIG_PATH)
+    path = os.environ.get("VPNCTL_CONFIG", DEFAULT_CONFIG_PATH)
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             for line in f:
@@ -462,8 +473,8 @@ def cmd_get_config(args, srv: Server) -> dict:
 
 
 def cmd_encode(args, srv=None):
-    with open(args.input, encoding="utf-8") as f:
-        print(encode_vpn_url(f.read()))
+    # Reads stdin, not a path: run as root, a path argument would read any file.
+    print(encode_vpn_url(sys.stdin.read()))
 
 
 def cmd_decode(args, srv=None):
@@ -471,6 +482,109 @@ def cmd_decode(args, srv=None):
     if not decoded:
         raise InvalidInput("Could not decode vpn:// URL")
     print(decoded)
+
+
+# --- serve: one request from the bot per connection ---
+
+# The only commands a connection can run, and the arguments each one takes.
+SERVE_COMMANDS = {
+    "create-peer": (cmd_create_peer, {"subscription_id", "label"}),
+    "disable-peer": (cmd_disable_peer, {"peer_id"}),
+    "enable-peer": (cmd_enable_peer, {"peer_id"}),
+    "remove-peer": (cmd_remove_peer, {"peer_id"}),
+    "peer-status": (cmd_peer_status, {"peer_id"}),
+    "get-config": (cmd_get_config, {"peer_id"}),
+}
+MAX_REQUEST_BYTES = 4096
+READ_TIMEOUT_SECONDS = 10
+
+
+def connection():
+    """The socket systemd handed us as stdin, or None when stdin is a pipe or file."""
+    if not stat.S_ISSOCK(os.fstat(0).st_mode):
+        return None
+    return socket.socket(fileno=os.dup(0))
+
+
+def check_caller(sock, cfg: dict) -> None:
+    """A Unix-socket caller got past the socket's file permissions. A TCP caller must
+    come from an address in ALLOWED_CLIENTS: the bot host's Tailscale IP."""
+    if sock is None or sock.family == socket.AF_UNIX:
+        return
+    try:
+        peer = ipaddress.ip_address(sock.getpeername()[0])
+    except (OSError, ValueError):
+        raise Refused("Cannot tell who is calling")
+    if getattr(peer, "ipv4_mapped", None):
+        peer = peer.ipv4_mapped
+    allowed = set()
+    for part in cfg["ALLOWED_CLIENTS"].split(","):
+        with contextlib.suppress(ValueError):
+            allowed.add(ipaddress.ip_address(part.strip()))
+    if peer not in allowed:
+        raise Refused(f"{peer} is not in ALLOWED_CLIENTS")
+
+
+def read_request(sock) -> dict:
+    if sock is None:
+        raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
+    else:
+        sock.settimeout(READ_TIMEOUT_SECONDS)
+        raw = b""
+        try:
+            while b"\n" not in raw and len(raw) <= MAX_REQUEST_BYTES:
+                chunk = sock.recv(MAX_REQUEST_BYTES + 1 - len(raw))
+                if not chunk:
+                    break
+                raw += chunk
+        except socket.timeout:
+            raise InvalidInput("Timed out reading the request")
+    if len(raw) > MAX_REQUEST_BYTES:
+        raise InvalidInput("Request too large")
+    try:
+        request = json.loads(raw.split(b"\n", 1)[0].decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise InvalidInput("Request is not JSON")
+    if not isinstance(request, dict) or not isinstance(request.get("args", {}), dict):
+        raise InvalidInput("Request must be an object with an args object")
+    return request
+
+
+def handle(request: dict, cfg: dict) -> dict:
+    command = request.get("command")
+    if command not in SERVE_COMMANDS:
+        raise InvalidInput(f"Unknown command: {command!r}")
+    func, expected = SERVE_COMMANDS[command]
+    args = request.get("args", {})
+    if set(args) != expected or not all(isinstance(v, str) for v in args.values()):
+        raise InvalidInput(f"{command} takes exactly: {', '.join(sorted(expected))}")
+    return func(argparse.Namespace(**args), Server(cfg))
+
+
+def cmd_serve(args, srv=None):
+    """Answer one request. Errors go back in the response and the process still exits 0,
+    so systemd doesn't keep a failed unit for every bad request."""
+    try:
+        sock = connection()
+        cfg = load_settings()
+        # Read the (size-capped) request before refusing anyone: closing with unread
+        # data resets the connection, and the caller would never see why.
+        try:
+            request, bad_request = read_request(sock), None
+        except InvalidInput as e:
+            request, bad_request = None, e
+        check_caller(sock, cfg)
+        if bad_request:
+            raise bad_request
+        response = {"exit_code": 0, "result": handle(request, cfg)}
+    except VpnctlError as e:
+        response = {"exit_code": e.exit_code, "error": str(e)}
+    except OSError as e:
+        response = {"exit_code": 1, "error": str(e)}
+    if response["exit_code"]:
+        sys.stderr.write(f"vpnctl serve: {response['error']}\n")
+    sys.stdout.write(json.dumps(response) + "\n")
+    sys.stdout.flush()
 
 
 def main():
@@ -489,13 +603,15 @@ def main():
         p.add_argument("--peer-id", required=True)
         p.set_defaults(func=func)
 
-    p = sub.add_parser("encode")
-    p.add_argument("-i", "--input", required=True, help="Path to .conf file")
+    p = sub.add_parser("encode", help="Read a .conf on stdin and print its vpn:// key")
     p.set_defaults(func=cmd_encode, raw=True)
 
     p = sub.add_parser("decode")
     p.add_argument("-u", "--url", required=True, help="vpn:// URL")
     p.set_defaults(func=cmd_decode, raw=True)
+
+    p = sub.add_parser("serve", help="Answer one request on stdin (started by systemd)")
+    p.set_defaults(func=cmd_serve, raw=True)
 
     args = parser.parse_args()
     try:
