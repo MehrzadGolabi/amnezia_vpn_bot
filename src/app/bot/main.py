@@ -11,7 +11,7 @@ from src.app.db.repositories.server_repo import ServerRepository
 from src.app.db.repositories.product_repo import ProductRepository
 from src.app.bot.middleware.user_middleware import UserMiddleware
 from src.app.bot.middleware.throttling_middleware import ThrottlingMiddleware
-from src.app.bot.handlers import admin_router, customer_router, fallback_router, support_router
+from src.app.bot.handlers import admin_jobs_router, admin_router, customer_router, fallback_router, support_router
 from src.app.utils.logging import get_logger, setup_logging
 from src.app.worker.main import build_provisioner
 
@@ -113,6 +113,7 @@ async def build_dispatcher(session_factory, settings, provisioner=None) -> Dispa
     dp.include_router(customer_router)
     dp.include_router(support_router)
     dp.include_router(admin_router)
+    dp.include_router(admin_jobs_router)
     dp.include_router(fallback_router)
     return dp
 

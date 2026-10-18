@@ -75,6 +75,8 @@ async def _dashboard(session: AsyncSession) -> Tuple[str, InlineKeyboardMarkup]:
         f"• <code>/user &lt;telegram_id&gt;</code> - Lookup User Details\n"
         f"• <code>/block &lt;telegram_id&gt;</code> - Suspend User\n"
         f"• <code>/unblock &lt;telegram_id&gt;</code> - Unsuspend User\n"
+        f"• <code>/retry</code> - Retry Jobs That Failed For Good\n"
+        f"• <code>/audit</code> - Latest Admin And System Actions\n"
     )
 
     kb = InlineKeyboardMarkup(

@@ -24,6 +24,7 @@ from src.app.integrations.provisioning.vpnctl_client import (
 )
 from src.app.utils.amnezia_codec import encode_vpn_url
 from src.app.bot.locales.strings import get_text, server_name
+from src.app.bot.ui import retry_button
 from src.app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -89,8 +90,10 @@ class WorkerEngine:
                     await session.commit()
                     if failed and failed.status == JobStatus.PERMANENT_FAILURE:
                         await self._alert_admin(
-                            f"🚨 Provisioning job {failed.job_type} {job_id} failed for good "
-                            f"after {failed.attempt_count} attempt(s):\n{e}"
+                            f"🚨 Provisioning job {failed.job_type.value} {job_id} failed for good "
+                            f"after {failed.attempt_count} attempt(s):\n{e}\n\n"
+                            f"Retry it once the cause is fixed, or later with /retry.",
+                            retry_job_id=job_id,
                         )
 
             return len(jobs)
@@ -252,11 +255,13 @@ class WorkerEngine:
                 logger.warning("failed_to_send_vpn_url", user_id=chat_id, error=str(e))
         return True
 
-    async def _alert_admin(self, message: str) -> None:
+    async def _alert_admin(self, message: str, retry_job_id=None) -> None:
         if self.admin_chat_id:
             try:
+                markup = retry_button(retry_job_id) if retry_job_id is not None else None
                 # Plain text: the message can carry vpnctl's stderr from a remote host.
-                await self.bot.send_message(chat_id=self.admin_chat_id, text=message, parse_mode=None)
+                await self.bot.send_message(chat_id=self.admin_chat_id, text=message,
+                                            parse_mode=None, reply_markup=markup)
             except Exception as e:
                 logger.error("admin_alert_failed", error=str(e))
 
