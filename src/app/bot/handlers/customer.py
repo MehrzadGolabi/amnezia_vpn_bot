@@ -65,7 +65,7 @@ async def callback_menu_buy(query: CallbackQuery, data: Dict[str, Any]):
     lang = user.language_code if user else "en"
 
     server_repo = ServerRepository(session)
-    servers = await server_repo.list_enabled()
+    servers = await server_repo.list_for_sale()
 
     if not servers:
         empty_msg = get_text("no_servers", lang)
@@ -91,8 +91,11 @@ async def callback_select_server(query: CallbackQuery, data: Dict[str, Any]):
     product_repo = ProductRepository(session)
 
     server = await server_repo.get_by_slug(server_slug)
-    if not server or not server.enabled:
+    if not server or not server.on_sale:
         await query.answer(get_text("server_not_found", lang), show_alert=True)
+        return
+    if not await server_repo.has_room(server):
+        await query.answer(get_text("server_full", lang), show_alert=True)
         return
 
     products = await product_repo.list_enabled()
@@ -109,11 +112,15 @@ async def callback_select_plan(query: CallbackQuery, data: Dict[str, Any], state
     lang = user.language_code if user else "en"
 
     parts = query.data.split("_")
-    server = await ServerRepository(session).get_by_slug(parts[1])
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_slug(parts[1])
     product = await ProductRepository(session).get_by_code(parts[2])
     # Button data comes from the client, so check again what the menu only showed.
-    if not server or not server.enabled or not product or not product.enabled:
+    if not server or not server.on_sale or not product or not product.enabled:
         await query.answer(get_text("invalid_selection", lang), show_alert=True)
+        return
+    if not await server_repo.has_room(server):
+        await query.answer(get_text("server_full", lang), show_alert=True)
         return
     await _start_order(query, data, state, server, product)
 

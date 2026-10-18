@@ -231,3 +231,39 @@ async def test_admin_actions_are_recorded(session):
     for event in ("order.approved", "order.rejected", "user.blocked", "user.unblocked"):
         assert (event, ADMIN_ID) in events, event
     assert {e for e, _ in events} & {"server.disabled", "server.paused", "server.enabled", "server.resumed"}
+
+
+# --- Capacity ---
+
+async def test_full_server_is_not_offered_and_cannot_be_ordered(session):
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+    from src.app.bot.handlers.customer import callback_menu_buy, callback_select_plan, callback_select_server
+
+    sub, _ = await approved_subscription(session)  # one subscription on de-1, still provisioning
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_slug("de-1")
+    server.max_active_subscriptions = 1
+    await session.commit()
+    assert await server_repo.has_room(server) is False
+    assert await server_repo.list_for_sale() == []
+
+    user = await UserRepository(session).get_by_telegram_id(777)
+    data = {"db_user": user, "session": session}
+    state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=777, user_id=777))
+    for handler, query_data in ((callback_select_server, "srv_de-1"), (callback_select_plan, "plan_de-1_vpn-1m")):
+        query = press(query_data)
+        args = (query, data, state) if handler is callback_select_plan else (query, data)
+        await handler(*args)
+        query.message.edit_text.assert_not_called()
+        assert "full" in query.answer.call_args.args[0]
+    assert await state.get_state() is None
+
+    # Raising the limit puts it back on sale.
+    server.max_active_subscriptions = 2
+    await session.commit()
+    assert [s.slug for s in await server_repo.list_for_sale()] == ["de-1"]
+    menu = press("menu_buy")
+    await callback_menu_buy(menu, data)
+    assert "de-1" in str(menu.message.edit_text.call_args)

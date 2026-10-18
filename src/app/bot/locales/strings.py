@@ -99,6 +99,10 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "en": "Server not found",
         "fa": "سرور پیدا نشد",
     },
+    "server_full": {
+        "en": "This location is full right now. Please pick another one.",
+        "fa": "ظرفیت این سرور در حال حاضر تکمیل است. لطفا سرور دیگری انتخاب کنید.",
+    },
     "server_unavailable": {
         "en": "Server not available",
         "fa": "این سرور در دسترس نیست",
