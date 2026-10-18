@@ -1,3 +1,5 @@
+# Legacy: Docker is no longer maintained and may not match the current code.
+# Use docs/NATIVE_SETUP.md instead.
 # Stage 1: Build stage
 FROM python:3.12-slim AS builder
 

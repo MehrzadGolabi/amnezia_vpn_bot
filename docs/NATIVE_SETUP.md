@@ -1,4 +1,4 @@
-# Running the bot without Docker
+# Setup
 
 The bot, worker and scheduler run together as one systemd service, `vpnbot`, on one VPN host. The worker asks `vpnctl` on that host through a Unix socket, and reaches any other VPN hosts over Tailscale. The database is one SQLite file.
 

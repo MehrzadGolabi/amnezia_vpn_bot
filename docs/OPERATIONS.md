@@ -7,15 +7,19 @@ Send these to the bot from an account listed in `ADMIN_TELEGRAM_IDS`.
 | Command | What it does |
 |---|---|
 | `/admin` | Shows pending receipts and open tickets. |
-| `/servers` | Shows each server's active subscriptions, and lets you turn a server on or off for new orders. |
+| `/servers` | Shows each server's state and active subscriptions, and pauses or resumes a server for new orders. |
 | `/products` | Lists the plans. |
 | `/user <telegram_id>` | Shows a customer and their subscriptions, with data used and last connection. |
 | `/extend <config name> <days>` | Adds days to a subscription and turns it back on if it had expired. A negative number takes days off. |
 | `/block <telegram_id>`, `/unblock <telegram_id>` | Suspends or restores a customer. |
+| `/retry` | Lists jobs that failed for good, with their last error, and queues one or all of them again. |
+| `/audit` | The latest 20 admin and system actions: approvals, rejections, blocks, pauses, extensions, retries, and peers created, disabled or removed. |
 
 Receipts arrive in `ADMIN_CHAT_ID` with Approve and Reject buttons. Approving queues a job, and the worker creates the client and sends the config.
 
-Turning a server off in `/servers` lasts until the bot restarts. On startup the bot reloads servers from `.env`, so use `VPN_SERVER_<NAME>_ENABLED=false` to turn one off permanently.
+A server is on sale when `VPN_SERVER_<NAME>_ENABLED` is `true`, it isn't paused in `/servers`, and it is below `MAX_ACTIVE_SUBSCRIPTIONS`. A pause stays after a restart. A server turned off in `.env` can only be turned on there. None of this stops renewals of existing subscriptions.
+
+When a job fails for good, the alert in the admin chat has a Retry button. `/retry` does the same for every failed job. It won't queue a job again when that could do harm: a create job whose subscription is no longer waiting for a peer, an enable job for a subscription that has run out, or a job that is already queued.
 
 ## Languages
 
@@ -157,6 +161,35 @@ Older versions ran `vpnctl` through sudo, and reached other VPN hosts over SSH. 
 
    Then remove `tag:vpn:22` for `tag:bot` from the Tailscale policy.
 
+## Changing the bot's token
+
+Every VPN host accepts a list of token hashes, so the token can be changed without a moment where the bot is refused. Every host must already run a `vpnctl` that understands the list, so update and re-run the installer on all of them first.
+
+1. On the bot host, make a new token and its hash, but don't put it in `.env` yet:
+
+   ```bash
+   NEW=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))'); echo "$NEW"; printf '%s' "$NEW" | sha256sum | cut -d' ' -f1
+   ```
+
+2. On each extra VPN host, accept both the old and the new token:
+
+   ```bash
+   sudo /opt/amnezia_vpn_bot/scripts/provisioner/install-provisioner.sh --tailnet <bot host tailscale IP> --token-sha256 <old hash>,<new hash>
+   ```
+
+3. On the bot host, replace `VPNCTL_TOKEN` in `.env` with the new token (keep a single line), restart `vpnbot`, and check every host with `sudo -u vpn-provisioner vpnctl-check <tailscale IP>`.
+4. On each extra VPN host, run the installer again with only `--token-sha256 <new hash>`.
+
+## Checking the caller's Tailscale tag (optional)
+
+On top of the address and the token, `vpnctl` can ask Tailscale whether the caller's machine carries a tag. It is off by default and hasn't been tried on a real host yet, so test it on one host first.
+
+1. On the VPN host, check that whois shows the bot host's tag: `tailscale whois --json <bot host tailscale IP>` should print a `"Tags"` list containing `tag:bot`.
+2. Add `REQUIRED_TAILSCALE_TAGS=tag:bot` to `/etc/amnezia/vpnctl.conf`.
+3. From the bot host, `sudo -u vpn-provisioner vpnctl-check <tailscale IP>` should still answer, and `journalctl -u 'vpnctl-tailnet@*' -b --no-pager -p warning` should show nothing.
+
+A caller without the tag is refused for good. If whois itself fails, for example while tailscaled restarts, the request is refused as retryable and the worker tries again. If it keeps failing inside `vpnctl`'s sandbox, delete the setting and tell me what the journal says.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -167,6 +200,6 @@ Older versions ran `vpnctl` through sudo, and reached other VPN hosts over SSH. 
 | `<IP> is not in ALLOWED_CLIENTS` | The VPN host doesn't know the bot host's Tailscale IP. Run the installer there again with `--tailnet <bot host tailscale IP>`. |
 | `Unable to modify interface` | `awg-quick@awg1` is down. Start it, and the worker retries on its own. |
 | Client gets no handshake | Make sure the client app is 3.1 (AmneziaWG 3.1.x, AmneziaVPN 5.0.2.1+). Check `ENDPOINT_HOST` in `vpnctl.conf` and that ufw allows the port. |
-| Jobs failed for good while a server was unreachable | Once it answers `vpnctl-check` again, queue them again. Without Docker: `sudo -u vpn-provisioner sqlite3 /opt/amnezia_vpn_bot/data/bot.db "UPDATE provisioning_jobs SET status = 'pending', attempt_count = 0 WHERE status = 'permanent_failure';"`. With Docker, run the same `UPDATE` through `docker compose exec -T postgres psql -U vpn_bot vpn_bot -c "..."`. Paid orders then get their configs. |
+| Jobs failed for good while a server was unreachable | Once it answers `vpnctl-check` again, press Retry on the alert, or use `/retry`. Paid orders then get their configs. |
 | `Refusing to install: ... is owned by uid ...` | The folder must be owned by root. See [Updating](#updating). |
 | `database is locked` | Something else is holding the SQLite file, such as an open `sqlite3` shell. Close it. |

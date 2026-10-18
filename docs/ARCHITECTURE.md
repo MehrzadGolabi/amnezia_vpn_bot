@@ -28,7 +28,7 @@ The worker polls every `PROVISIONING_JOB_POLL_SECONDS`. It claims a batch and co
 
 Jobs are safe to repeat. `create-peer` with an existing label returns the existing client, and disable and remove succeed when there's nothing left to do. The scheduler doesn't queue a job if the same one is already pending.
 
-The worker assumes it is the only worker running. Claims don't lock rows, so don't start two workers.
+Each claim is one `UPDATE` that matches only while the job is still claimable, so if two workers ever run, only one of them gets a job. Run one anyway: there's nothing to gain from two.
 
 ## States
 

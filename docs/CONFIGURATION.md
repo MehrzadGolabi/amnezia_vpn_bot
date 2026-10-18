@@ -15,7 +15,7 @@ All settings live in `.env` in the repository root. Start from `.env.example`.
 | Setting | Default | Meaning |
 |---|---|---|
 | `DATABASE_URL` | Postgres in Docker | Without Docker: `sqlite+aiosqlite:////opt/amnezia_vpn_bot/data/bot.db`. With Docker: `postgresql+asyncpg://USER:PASSWORD@postgres:5432/DB`. |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | `vpn_bot`, `vpn_bot_secret`, `vpn_bot` | Docker only. Used to create the Postgres container. They must match `DATABASE_URL`. |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | `vpn_bot`, `vpn_bot_secret`, `vpn_bot` | Legacy Docker only. Used to create the Postgres container. They must match `DATABASE_URL`. |
 
 ## Provisioning
 
@@ -25,7 +25,7 @@ All settings live in `.env` in the repository root. Start from `.env.example`.
 | `VPNCTL_SOCKET` | `/run/vpnctl/vpnctl.sock` | Where `vpnctl` on this host listens. |
 | `VPNCTL_DEV_COMMAND` | | Development only: run this command with `serve` instead of using the socket, for the test sandbox (see [vpnctl](VPNCTL.md#testing-without-a-vps)). |
 | `VPNCTL_TOKEN` | | Sent to `vpnctl` on other VPN hosts, which keep its SHA-256 as `CLIENT_TOKEN_SHA256`. Not sent over the local socket. See [More servers](NATIVE_SETUP.md#more-servers). |
-| `VPNCTL_GID` | | Docker only: the `vpn-provisioner` group's ID on the host, so the containers can use the socket. |
+| `VPNCTL_GID` | | Legacy Docker only: the `vpn-provisioner` group's ID on the host, so the containers can use the socket. |
 | `PROVISIONING_JOB_POLL_SECONDS` | `5` | How often the worker checks for new jobs. |
 
 ## Subscriptions
@@ -47,8 +47,8 @@ Each location customers can buy is a group of `VPN_SERVER_<NAME>_*` settings. `<
 | `VPN_SERVER_<NAME>_SLUG` | from `<NAME>` | Short unique ID, such as `main-1`. It becomes part of client names. |
 | `VPN_SERVER_<NAME>_DISPLAY_NAME` | | Shown on buttons, such as `Germany`. |
 | `VPN_SERVER_<NAME>_COUNTRY_CODE` | | Two-letter code, such as `DE`. |
-| `VPN_SERVER_<NAME>_ENABLED` | `true` | `false` hides it from new orders. |
-| `VPN_SERVER_<NAME>_MAX_ACTIVE_SUBSCRIPTIONS` | none | Capacity shown in `/servers`. It is displayed only and does not stop sales. |
+| `VPN_SERVER_<NAME>_ENABLED` | `true` | `false` hides it from new orders. `/servers` can also pause a server that is on here. |
+| `VPN_SERVER_<NAME>_MAX_ACTIVE_SUBSCRIPTIONS` | none | Once this many subscriptions are active or being set up, the server leaves the buy menu. Renewals still work. |
 | `VPN_SERVER_<NAME>_HOST` | `localhost` | Leave it out for the server the bot runs on. For another VPN host, its Tailscale IP. |
 | `VPN_SERVER_<NAME>_VPNCTL_PORT` | `7391` | The port `vpnctl` listens on at that Tailscale IP (`install-provisioner.sh --port`). |
 

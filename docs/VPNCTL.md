@@ -71,7 +71,9 @@ This is the same layout `awg-add-client.sh` and `awg-del-client.sh` use, so the 
 | `PERSISTENT_KEEPALIVE` | `25` | |
 | `AWG_BIN` | `awg` | The `awg` binary from amneziawg-tools 3.1. |
 | `ALLOWED_CLIENTS` | | Comma-separated IPs that may connect over TCP: the bot host's Tailscale IP. Empty refuses everyone. Set by `install-provisioner.sh --tailnet`. |
-| `CLIENT_TOKEN_SHA256` | | SHA-256 (hex) of the bot's `VPNCTL_TOKEN`. TCP callers must send that token. Empty refuses everyone. Set by `--token-sha256`. |
+| `CLIENT_TOKEN_SHA256` | | SHA-256 (hex) of the bot's `VPNCTL_TOKEN`. TCP callers must send that token. Several hashes, joined by commas, accept any of them while a token is being changed. Empty refuses everyone. Set by `--token-sha256`. |
+| `REQUIRED_TAILSCALE_TAGS` | | Optional. Comma-separated tags, such as `tag:bot`. TCP callers must also be on a Tailscale node with one of them, checked with `tailscale whois`. See [Operations](OPERATIONS.md#checking-the-callers-tailscale-tag-optional). |
+| `TAILSCALE_BIN` | `tailscale` | The `tailscale` command, for the tag check. |
 
 Keys, port, subnet and obfuscation values are read from `awg1.conf`, so they never need to be copied here.
 
