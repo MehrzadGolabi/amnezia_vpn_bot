@@ -4,7 +4,7 @@
 Telegram  <-->  bot  ----writes---->  database  <----reads/writes----  scheduler
                                         ^   |
                                         |   v
-                                       worker  --(local sudo or SSH)-->  vpnctl  -->  awg1.conf, awg set
+                                       worker  --(Unix socket, or TCP over Tailscale)-->  vpnctl  -->  awg1.conf, awg set
 ```
 
 - **bot** (`src/app/bot`) is the aiogram interface. Customers order, upload receipts, read their subscriptions and open tickets. Admins approve, reject and manage things.
@@ -39,23 +39,34 @@ Subscription: `provisioning` -> `active` -> `disabled` (expired, peer off) -> `e
 ## Security
 
 - Client private keys and configs live only on the VPN server, in `/etc/amnezia/amneziawg/clients/`, readable by root only. The database stores the client name, not the keys.
-- The bot processes never run as root. `vpn-provisioner` can run only `vpnctl`, and only with the subcommands listed in `sudoers.example`.
-- `vpnctl` checks every argument: names must match `^[a-zA-Z0-9_-]{1,64}$`, and subscription IDs must be UUIDs. The SSH provisioner checks names too, and quotes every argument.
-- The worker checks every VPN host's SSH key against `known_hosts` and refuses unknown or changed keys. With Docker, the SSH key and `known_hosts` are mounted read-only.
+- The bot never runs as root, never uses sudo, and has no SSH key. `vpnbot.service` runs it as `vpn-provisioner` with no capabilities, a read-only file system except `data/`, and a system call filter.
+- The bot changes a VPN server only by sending one JSON request to `vpnctl`, which accepts six commands (create, disable, enable, remove, status, config) and nothing else. `vpnctl` checks every argument: names must match `^[a-zA-Z0-9_-]{1,64}$`, and subscription IDs must be UUIDs.
+- systemd starts a fresh `vpnctl serve` for each request (`vpnctl@.service`). It runs as root, because changing the interface needs it, but can write only the AmneziaWG folder, keeps only `CAP_NET_ADMIN`, and can't open network connections of its own.
 - The code in `/opt/amnezia_vpn_bot` is owned by root. `vpn-provisioner` can write only `data/`, and can read but not change `.env`. Root runs `install-provisioner.sh` from this folder, so a bot the service user could edit would give root to anyone who breaks into the bot. The installer refuses to run if the folder isn't root-owned.
 - Customer text (receipt notes, support messages) is HTML-escaped before it reaches the admin chat. Alerts that carry `vpnctl` output are sent as plain text.
 - Logs redact bot tokens, passwords, private keys, client configs and `vpn://` links.
 - `ThrottlingMiddleware` drops messages and button presses sent less than 0.5 s apart by the same user. `/block` suspends a user.
 - Button data comes from the client, so handlers check again that a server and plan are on sale, and that a subscription belongs to the user.
 
-### More than one server
+### How the bot reaches vpnctl
 
-The bot host holds an SSH key that reaches `vpn-provisioner` on every other VPN host. On those hosts the key can only run `vpnctl` through `/usr/local/sbin/vpnctl-ssh`, which accepts the six commands the bot sends (create, disable, enable, remove, status, config) with checked arguments, and nothing else: no shell, file copy or port forwarding. `from=` in `authorized_keys` accepts the key only from the bot host's Tailscale IP.
+On the bot's own host, `vpnctl.socket` listens on `/run/vpnctl/vpnctl.sock`. Only root and the `vpn-provisioner` group can connect.
+
+On every other VPN host, `vpnctl-tailnet.socket` listens on that host's Tailscale address, port 7391. Every check below has to pass before a request runs:
+
+1. The Tailscale policy below lets only the bot host (`tag:bot`) reach that port.
+2. systemd's `IPAddressAllow` accepts connections only from the bot host's Tailscale IP.
+3. `vpnctl` refuses any caller not listed in `ALLOWED_CLIENTS` in `/etc/amnezia/vpnctl.conf`.
+4. `vpnctl` refuses any request without the bot's token, `VPNCTL_TOKEN` in the bot's `.env`. The VPN host keeps only its SHA-256 (`CLIENT_TOKEN_SHA256`), so a broken-into VPN host can't use it against the others.
+
+A Tailscale address can't be faked: traffic from 100.x.y.z arrives through WireGuard, signed by that machine's key, and Tailscale drops packets claiming a 100.x address that come in any other way. The connection is encrypted by WireGuard. But the address names a machine, not a program: any user or service on the bot host has the same address. The token, which only root and the `vpn-provisioner` group can read, is what says the caller is the bot. Checks 3 and 4 are done by `vpnctl` itself, so they hold even if the Tailscale policy or systemd's filter is set up wrong.
+
+This is not automatically safer than SSH with a forced command. A root service listening on the network is a target of its own. What it removes is the bot's SSH key, a login account with sudo on every VPN host, and an unsandboxed `vpnctl`. What it adds is a small, sandboxed process per request, and a reliance on Tailscale for who may connect, which is why `vpnctl` checks the caller and the token itself.
 
 What a break-in can reach:
 
 - **Bot host:** the bot token, the database, and `vpnctl` on every server. The attacker can create, disable or remove customers and read their configs, but gets no shell or root on the other servers. Keep this host patched and backed up.
-- **Any other server:** only that server's own customers. It can't use the bot's key, and with the Tailscale policy below it can't open connections to the bot host or other servers. The bot checks its host key and treats what `vpnctl` returns as data: it takes only the config and builds the file name and `vpn://` link itself.
+- **Any other server:** only that server's own customers. It has no key to the others, and with the Tailscale policy below it can't open connections to the bot host or other servers. The bot treats what `vpnctl` returns as data: it takes only the config and builds the file name and `vpn://` link itself.
 
 Tailscale allows every device to reach every other one by default. To stop a server from reaching the others, tag the servers in the Tailscale admin console (Machines, Edit ACL tags) and set a policy (Access controls) like this:
 
@@ -67,11 +78,10 @@ Tailscale allows every device to reach every other one by default. To stop a ser
   },
   "acls": [
     {"action": "accept", "src": ["autogroup:admin"], "dst": ["*:*"]},
-    {"action": "accept", "src": ["tag:bot"], "dst": ["tag:vpn:22"]},
+    {"action": "accept", "src": ["tag:bot"], "dst": ["tag:vpn:7391"]},
     {"action": "accept", "src": ["autogroup:member"], "dst": ["autogroup:internet:*"]}
   ]
 }
 ```
 
-Tag the bot host `tag:bot` and the other VPN hosts `tag:vpn`. Your own devices keep full access, the bot host can reach only SSH on the VPN hosts, other people in the tailnet can use exit nodes but reach no machine, and the servers can't open connections to any machine in the tailnet. Before saving, use the policy editor's preview to check that family and friends' devices still have exit node access.
-
+Tag the bot host `tag:bot` and the other VPN hosts `tag:vpn`. Your own devices keep full access, the bot host can reach only `vpnctl` on the VPN hosts, other people in the tailnet can use exit nodes but reach no machine, and the servers can't open connections to any machine in the tailnet. Before saving, use the policy editor's preview to check that family and friends' devices still have exit node access.

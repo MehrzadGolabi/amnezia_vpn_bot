@@ -16,7 +16,7 @@ from src.app.db.repositories.subscription_repo import SubscriptionRepository
 from src.app.db.repositories.job_repo import JobRepository
 
 from src.app.integrations.provisioning.mock_provisioner import MockProvisioner
-from src.app.integrations.provisioning.ssh_provisioner import RetryableProvisioningError, PermanentProvisioningError
+from src.app.integrations.provisioning.vpnctl_client import RetryableProvisioningError, PermanentProvisioningError
 from src.app.worker.engine import WorkerEngine
 
 

@@ -1,0 +1,38 @@
+# One vpnctl request. Started by vpnctl.socket (installed as vpnctl@.service) and by
+# vpnctl-tailnet.socket (installed as vpnctl-tailnet@.service) for each connection.
+[Unit]
+Description=vpnctl request
+CollectMode=inactive-or-failed
+
+[Service]
+Type=exec
+ExecStart=/usr/local/sbin/vpnctl serve
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=60
+
+# Root, but only able to change the AmneziaWG folder and the interface.
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/amnezia/amneziawg
+# amneziawg-go's control sockets, if this host uses it instead of the kernel module.
+ReadWritePaths=-/run/amneziawg -/run/wireguard
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077

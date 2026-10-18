@@ -1,9 +1,38 @@
 #!/usr/bin/env bash
+# Installs vpnctl and the systemd sockets the bot talks to it through.
+#
+#   install-provisioner.sh                      on the host the bot runs on: the bot
+#                                               connects to /run/vpnctl/vpnctl.sock
+#   install-provisioner.sh --tailnet <bot IP>   on every other VPN host: vpnctl listens
+#                                               on this host's Tailscale address and
+#                                               answers only <bot IP>, the bot host's
+#                                               Tailscale address
+#   ... --token-sha256 <hex>                    SHA-256 of the bot's VPNCTL_TOKEN; vpnctl
+#                                               refuses TCP callers without that token
+#   ... --port <n>                              the Tailscale port (default 7391)
+#   ... --remove-ssh                            after the bot is updated: remove the old
+#                                               SSH and sudo setup (see docs/OPERATIONS.md)
+#
+# Running it again is safe. It keeps /etc/amnezia/vpnctl.conf.
 set -euo pipefail
 
-echo "==> Setting up vpn-provisioner service account on AmneziaWG host"
+TAILNET_BOT_IP=""
+TOKEN_SHA256=""
+PORT=7391
+REMOVE_SSH=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --tailnet) TAILNET_BOT_IP="${2:?--tailnet needs the Tailscale IP of the bot host}"; shift 2 ;;
+        --token-sha256) TOKEN_SHA256="${2:?--token-sha256 needs the token hash}"; shift 2 ;;
+        --port) PORT="${2:?--port needs a number}"; shift 2 ;;
+        --remove-ssh) REMOVE_SSH=1; shift ;;
+        *) echo "Unknown option: $1"; exit 2 ;;
+    esac
+done
 
-# Root installs these files as root programs and a sudoers rule. If anyone but root
+echo "==> Installing vpnctl"
+
+# Root installs these files as root programs and systemd units. If anyone but root
 # can change them, or the folders above them, a break-in to the bot becomes root here.
 SRC_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 REPO_DIR="$(cd "$SRC_DIR/../.." && pwd -P)"
@@ -26,76 +55,104 @@ while :; do
     [ "$dir" = / ] && break
     dir="$(dirname "$dir")"
 done
-for f in "$SRC_DIR"/*; do
+for f in "$SRC_DIR"/* "$SRC_DIR"/systemd/*; do
     check_root_only "$f"
 done
 
 command -v python3 >/dev/null || { echo "python3 is required for vpnctl"; exit 1; }
 command -v awg >/dev/null || echo "WARNING: awg not found. Install amneziawg-tools 3.1 first (see the migration guide)."
-
-# 1. Create dedicated system user
-if ! id "vpn-provisioner" &>/dev/null; then
-    useradd -r -s /bin/bash -m -d /home/vpn-provisioner vpn-provisioner
-    echo "Created user vpn-provisioner"
+if [ -n "$TAILNET_BOT_IP" ]; then
+    python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' "$TAILNET_BOT_IP" 2>/dev/null \
+        || { echo "--tailnet needs an IP address, got: $TAILNET_BOT_IP"; exit 2; }
+    if [ -n "$TOKEN_SHA256" ] && ! [[ "$TOKEN_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+        echo "--token-sha256 must be 64 hex characters (sha256sum of the token)"; exit 2
+    fi
+    command -v tailscale >/dev/null || { echo "tailscale is required for --tailnet"; exit 1; }
+    LISTEN_IP="$(tailscale ip -4 | head -n1)"
+    [ -n "$LISTEN_IP" ] || { echo "This host has no Tailscale IPv4 address. Run 'tailscale up' first."; exit 1; }
 fi
 
-# 2. Setup SSH directory and permissions
-SSH_DIR="/home/vpn-provisioner/.ssh"
-mkdir -p "$SSH_DIR"
-chmod 700 "$SSH_DIR"
-
-if [ ! -f "$SSH_DIR/authorized_keys" ]; then
-    touch "$SSH_DIR/authorized_keys"
-    chmod 600 "$SSH_DIR/authorized_keys"
-    echo "Created $SSH_DIR/authorized_keys - please append the bot's public key."
-fi
-chown -R vpn-provisioner:vpn-provisioner "$SSH_DIR"
-
-# 3. Install vpnctl script
-SCRIPT_SRC="$(dirname "$0")/vpnctl"
-if [ -f "$SCRIPT_SRC" ]; then
-    cp "$SCRIPT_SRC" /usr/local/sbin/vpnctl
-    chmod 755 /usr/local/sbin/vpnctl
-    chown root:root /usr/local/sbin/vpnctl
-    echo "Installed /usr/local/sbin/vpnctl"
-fi
-
-# 3b. Forced command for the bot's SSH key
-WRAPPER_SRC="$(dirname "$0")/vpnctl-ssh"
-if [ -f "$WRAPPER_SRC" ]; then
-    install -m 755 -o root -g root "$WRAPPER_SRC" /usr/local/sbin/vpnctl-ssh
-    echo "Installed /usr/local/sbin/vpnctl-ssh"
-fi
-
-# 4. vpnctl settings (kept if they already exist)
-CONF_SRC="$(dirname "$0")/vpnctl.conf.example"
-if [ ! -f /etc/amnezia/vpnctl.conf ] && [ -f "$CONF_SRC" ]; then
-    install -D -m 600 -o root -g root "$CONF_SRC" /etc/amnezia/vpnctl.conf
+# 1. vpnctl and its settings (settings are kept if they already exist)
+install -m 755 -o root -g root "$SRC_DIR/vpnctl" /usr/local/sbin/vpnctl
+echo "Installed /usr/local/sbin/vpnctl"
+if [ ! -f /etc/amnezia/vpnctl.conf ]; then
+    install -D -m 600 -o root -g root "$SRC_DIR/vpnctl.conf.example" /etc/amnezia/vpnctl.conf
     echo "Installed /etc/amnezia/vpnctl.conf - check INTERFACE and ENDPOINT_HOST"
 fi
-
-# 5. Install Sudoers configuration
-SUDOERS_SRC="$(dirname "$0")/sudoers.example"
-if [ -f "$SUDOERS_SRC" ]; then
-    visudo -cf "$SUDOERS_SRC" >/dev/null
-    install -m 440 -o root -g root "$SUDOERS_SRC" /etc/sudoers.d/vpn-provisioner
-    echo "Installed /etc/sudoers.d/vpn-provisioner"
-fi
-
-# 6. Limit SSH logins as vpn-provisioner to vpnctl-ssh
-SSHD_SRC="$(dirname "$0")/sshd-vpn-provisioner.conf"
-SSHD_DST=/etc/ssh/sshd_config.d/vpn-provisioner.conf
-if [ -f "$SSHD_SRC" ] && [ -d /etc/ssh/sshd_config.d ]; then
-    install -m 644 -o root -g root "$SSHD_SRC" "$SSHD_DST"
-    mkdir -p /run/sshd    # sshd -t needs it, and socket-activated ssh may not have made it yet
-    if sshd -t; then
-        systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
-        echo "Installed $SSHD_DST"
+set_conf() {
+    if grep -q "^$1=" /etc/amnezia/vpnctl.conf; then
+        sed -i "s|^$1=.*|$1=$2|" /etc/amnezia/vpnctl.conf
     else
-        rm -f "$SSHD_DST"
-        echo "WARNING: sshd rejected $SSHD_DST, so it was not installed"
+        printf '%s=%s\n' "$1" "$2" >> /etc/amnezia/vpnctl.conf
     fi
+}
+
+UNITS=/etc/systemd/system
+install_service() {    # the sandboxed per-request unit, under the name its socket expects
+    install -m 644 -o root -g root "$SRC_DIR/systemd/vpnctl@.service" "$UNITS/$1@.service"
+    # The sandbox may write only the AmneziaWG folder; follow CONF_DIR if it was changed.
+    conf_dir="$(sed -n 's/^CONF_DIR=//p' /etc/amnezia/vpnctl.conf | tail -n1)"
+    rm -rf "$UNITS/$1@.service.d"
+    if [ -n "$conf_dir" ] && [ "$conf_dir" != /etc/amnezia/amneziawg ]; then
+        mkdir -p "$UNITS/$1@.service.d"
+        printf '[Service]\nReadWritePaths=%s\n' "$conf_dir" > "$UNITS/$1@.service.d/conf-dir.conf"
+    fi
+}
+
+if [ -z "$TAILNET_BOT_IP" ]; then
+    # 2a. The bot runs here as vpn-provisioner and connects to the Unix socket.
+    if ! id vpn-provisioner &>/dev/null; then
+        useradd -r -s /usr/sbin/nologin -M -d /nonexistent vpn-provisioner
+        echo "Created user vpn-provisioner"
+    fi
+    install_service vpnctl
+    install -m 644 -o root -g root "$SRC_DIR/systemd/vpnctl.socket" "$UNITS/vpnctl.socket"
+    systemctl daemon-reload
+    systemctl enable --now vpnctl.socket
+    systemctl restart vpnctl.socket
+    echo "Listening on /run/vpnctl/vpnctl.sock for the vpn-provisioner group"
+else
+    # 2b. The bot runs elsewhere and connects over Tailscale.
+    set_conf ALLOWED_CLIENTS "$TAILNET_BOT_IP"
+    if [ -n "$TOKEN_SHA256" ]; then
+        set_conf CLIENT_TOKEN_SHA256 "$(printf '%s' "$TOKEN_SHA256" | tr 'A-F' 'a-f')"
+    elif ! grep -q '^CLIENT_TOKEN_SHA256=[0-9a-f]' /etc/amnezia/vpnctl.conf; then
+        echo "WARNING: no --token-sha256 given and none set, so vpnctl refuses the bot until you add one."
+    fi
+    install_service vpnctl-tailnet
+    sed -e "s|@LISTEN@|$LISTEN_IP:$PORT|" -e "s|@BOT_IP@|$TAILNET_BOT_IP|" \
+        "$SRC_DIR/systemd/vpnctl-tailnet.socket.in" > "$UNITS/vpnctl-tailnet.socket"
+    chmod 644 "$UNITS/vpnctl-tailnet.socket"
+    systemctl daemon-reload
+    systemctl enable --now vpnctl-tailnet.socket
+    systemctl restart vpnctl-tailnet.socket
+    echo "Listening on $LISTEN_IP:$PORT for $TAILNET_BOT_IP only"
 fi
 
-echo "==> Provisioner setup complete. Verify with:"
-echo "    sudo -u vpn-provisioner sudo -n /usr/local/sbin/vpnctl peer-status --peer-id test"
+# 3. The SSH and sudo setup of older versions. Only on request, after the bot is updated,
+#    because the old bot needs it until then.
+if [ "$REMOVE_SSH" = 1 ]; then
+    rm -f /etc/sudoers.d/vpn-provisioner /usr/local/sbin/vpnctl-ssh
+    if [ -f /etc/ssh/sshd_config.d/vpn-provisioner.conf ]; then
+        rm -f /etc/ssh/sshd_config.d/vpn-provisioner.conf
+        systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+    fi
+    if id vpn-provisioner &>/dev/null; then
+        home="$(getent passwd vpn-provisioner | cut -d: -f6)"
+        # The bot's key for other hosts, and other hosts' copies of it.
+        rm -f "$home/.ssh/authorized_keys" "$home/.ssh/id_ed25519" "$home/.ssh/id_ed25519.pub"
+        usermod -s /usr/sbin/nologin vpn-provisioner
+        if [ -n "$TAILNET_BOT_IP" ]; then
+            usermod -L vpn-provisioner    # no bot on this host, so nothing runs as it
+        fi
+    fi
+    echo "Removed the SSH and sudo setup for vpn-provisioner"
+fi
+
+install -m 755 -o root -g root "$SRC_DIR/vpnctl-check" /usr/local/bin/vpnctl-check
+echo "==> Done. Check it with:"
+if [ -z "$TAILNET_BOT_IP" ]; then
+    echo "    sudo -u vpn-provisioner vpnctl-check"
+else
+    echo "    on the bot host: sudo -u vpn-provisioner vpnctl-check $LISTEN_IP $PORT"
+fi

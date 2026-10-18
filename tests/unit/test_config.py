@@ -52,6 +52,7 @@ def test_vpn_servers_parsing_from_env():
         "VPN_SERVER_DE_1_COUNTRY_CODE": "DE",
         "VPN_SERVER_DE_1_DISPLAY_NAME": "Germany Frankfurt",
         "VPN_SERVER_DE_1_HOST": "de1.example.com",
+        "VPN_SERVER_DE_1_VPNCTL_PORT": "7400",
         "VPN_SERVER_DE_1_PORT": "22",
         "VPN_SERVER_DE_1_USERNAME": "vpn-provisioner",
         "VPN_SERVER_DE_1_SSH_PRIVATE_KEY_PATH": "/run/secrets/de_1_key",
@@ -66,8 +67,10 @@ def test_vpn_servers_parsing_from_env():
     assert server.country_code == "DE"
     assert server.display_name == "Germany Frankfurt"
     assert server.host == "de1.example.com"
-    assert server.port == 22
-    assert server.username == "vpn-provisioner"
+    assert server.vpnctl_port == 7400
+    # Left over from SSH: ignored, and reported at startup.
+    assert "VPN_SERVER_DE_1_SSH_PRIVATE_KEY_PATH" in settings.ignored_settings
+    assert "VPN_SERVER_DE_1_PORT" in settings.ignored_settings
     assert server.max_active_subscriptions == 100
 
 
@@ -81,3 +84,8 @@ def test_secret_redaction_in_repr():
     rep = repr(settings)
     assert "super_secret_bot_token" not in rep
     assert "secret_pass" not in rep
+
+
+def test_old_provisioner_modes_mean_vpnctl():
+    for old in ("local", "ssh", "LOCAL"):
+        assert Settings(PROVISIONER_MODE=old).PROVISIONER_MODE == ProvisionerMode.VPNCTL

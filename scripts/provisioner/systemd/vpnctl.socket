@@ -1,0 +1,16 @@
+# Requests from a bot on this host. Only root and the vpn-provisioner group can connect.
+# Each connection starts one vpnctl@.service, which answers it and exits.
+[Unit]
+Description=vpnctl requests from the bot on this host
+
+[Socket]
+ListenStream=/run/vpnctl/vpnctl.sock
+SocketUser=root
+SocketGroup=vpn-provisioner
+SocketMode=0660
+DirectoryMode=0755
+Accept=yes
+MaxConnections=32
+
+[Install]
+WantedBy=sockets.target
