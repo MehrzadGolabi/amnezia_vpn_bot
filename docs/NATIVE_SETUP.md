@@ -97,17 +97,26 @@ journalctl -u vpnbot -f
 
 Each extra VPN host needs AmneziaWG and `vpnctl`, but not the bot. The bot reaches it over Tailscale, so nothing has to be open to the internet, and no SSH key or login account is involved.
 
-Find the bot host's Tailscale IP (`tailscale ip -4` on the bot host). Then on the new server, with `awg-quick@awg1` and Tailscale running:
+Once, on the bot host, create the token the bot proves itself with, and print its hash for the other servers:
+
+```bash
+TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+echo "VPNCTL_TOKEN=$TOKEN" >> /opt/amnezia_vpn_bot/.env
+printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1     # the hash, for --token-sha256
+tailscale ip -4                                      # the bot host's Tailscale IP
+```
+
+Then on the new server, with `awg-quick@awg1` and Tailscale running:
 
 ```bash
 apt install -y git
 git clone https://github.com/MehrzadGolabi/amnezia_vpn_bot /opt/amnezia_vpn_bot
 cd /opt/amnezia_vpn_bot
-./scripts/provisioner/install-provisioner.sh --tailnet <bot host tailscale IP>
+./scripts/provisioner/install-provisioner.sh --tailnet <bot host tailscale IP> --token-sha256 <hash>
 nano /etc/amnezia/vpnctl.conf        # ENDPOINT_HOST = this server's public IP
 ```
 
-`vpnctl` now listens on this server's Tailscale address, port 7391, and answers only the bot host: the installer sets `ALLOWED_CLIENTS` in `vpnctl.conf` and limits the socket to that address as well. Set up the Tailscale policy in [Security](ARCHITECTURE.md#how-the-bot-reaches-vpnctl) too, so other machines in your tailnet can't reach the port at all.
+`vpnctl` now listens on this server's Tailscale address, port 7391, and answers only the bot host, and only with the token: the installer sets `ALLOWED_CLIENTS` and `CLIENT_TOKEN_SHA256` in `vpnctl.conf` and limits the socket to that address as well. The token itself never leaves the bot host's `.env`. Set up the Tailscale policy in [Security](ARCHITECTURE.md#how-the-bot-reaches-vpnctl) too, so other machines in your tailnet can't reach the port at all.
 
 Run the `vpnctl create-peer` smoke test from step 2 on the new server. Then, on the bot host, check that the bot can reach it. The output should be JSON with `"exists": false`:
 

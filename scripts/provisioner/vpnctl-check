@@ -2,18 +2,37 @@
 """Ask vpnctl for the status of a client that doesn't exist, the way the bot does.
 
     vpnctl-check                   through /run/vpnctl/vpnctl.sock on this host
-    vpnctl-check <host> [port]     over Tailscale to another VPN host (port 7391)
+    vpnctl-check <host> [port]     over Tailscale to another VPN host (port 7391), with
+                                   VPNCTL_TOKEN from the environment or the bot's .env
 
 Prints vpnctl's answer. "exists": false means the connection and vpnctl work.
 """
 import json
+import os
 import socket
 import sys
 
-REQUEST = json.dumps({"command": "peer-status", "args": {"peer_id": "vpnctl-check"}}).encode() + b"\n"
+ENV_FILE = "/opt/amnezia_vpn_bot/.env"
+
+
+def token() -> str:
+    if os.environ.get("VPNCTL_TOKEN"):
+        return os.environ["VPNCTL_TOKEN"]
+    try:
+        with open(ENV_FILE, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VPNCTL_TOKEN="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
 
 
 def main(argv):
+    body = {"command": "peer-status", "args": {"peer_id": "vpnctl-check"}}
+    if argv:
+        body["token"] = token()
+    request = json.dumps(body).encode() + b"\n"
     if argv:
         sock = socket.create_connection((argv[0], int(argv[1]) if len(argv) > 1 else 7391), timeout=15)
     else:
@@ -21,7 +40,7 @@ def main(argv):
         sock.settimeout(15)
         sock.connect("/run/vpnctl/vpnctl.sock")
     with sock:
-        sock.sendall(REQUEST)
+        sock.sendall(request)
         sock.shutdown(socket.SHUT_WR)
         out = b""
         while chunk := sock.recv(65536):

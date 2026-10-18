@@ -44,9 +44,11 @@ class AwgSandbox:
         data["awg1"][pubkey].update(fields)
         state.write_text(json.dumps(data))
 
-    def allow_clients(self, value: str) -> None:
+    def allow_clients(self, value: str, token_sha256: str = "") -> None:
         with open(self.vpnctl_config, "a") as f:
             f.write(f"ALLOWED_CLIENTS={value}\n")
+            if token_sha256:
+                f.write(f"CLIENT_TOKEN_SHA256={token_sha256}\n")
 
     def vpnctl(self, *args: str, env: dict = None) -> subprocess.CompletedProcess:
         full_env = {**os.environ, "VPNCTL_CONFIG": str(self.vpnctl_config), **(env or {})}

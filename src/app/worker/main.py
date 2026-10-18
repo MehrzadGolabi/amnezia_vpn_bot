@@ -20,7 +20,11 @@ def build_provisioner(settings) -> VPNProvisioner:
         logger.warning("ignored_setting", setting=name,
                        reason="vpnctl no longer uses SSH or sudo; see docs/OPERATIONS.md#updating")
     if settings.PROVISIONER_MODE == ProvisionerMode.VPNCTL:
-        return VpnctlProvisioner(socket_path=settings.VPNCTL_SOCKET, dev_command=settings.VPNCTL_DEV_COMMAND)
+        return VpnctlProvisioner(
+            socket_path=settings.VPNCTL_SOCKET,
+            dev_command=settings.VPNCTL_DEV_COMMAND,
+            token=settings.VPNCTL_TOKEN.get_secret_value(),
+        )
     return MockProvisioner()
 
 

@@ -24,6 +24,7 @@ All settings live in `.env` in the repository root. Start from `.env.example`.
 | `PROVISIONER_MODE` | `mock` | `vpnctl` manages real servers: through `VPNCTL_SOCKET` for servers without a `HOST`, and over Tailscale for servers with one. `mock` makes fake configs, for trying the bot without a server. The old values `local` and `ssh` mean `vpnctl`. |
 | `VPNCTL_SOCKET` | `/run/vpnctl/vpnctl.sock` | Where `vpnctl` on this host listens. |
 | `VPNCTL_DEV_COMMAND` | | Development only: run this command with `serve` instead of using the socket, for the test sandbox (see [vpnctl](VPNCTL.md#testing-without-a-vps)). |
+| `VPNCTL_TOKEN` | | Sent to `vpnctl` on other VPN hosts, which keep its SHA-256 as `CLIENT_TOKEN_SHA256`. Not sent over the local socket. See [More servers](NATIVE_SETUP.md#more-servers). |
 | `VPNCTL_GID` | | Docker only: the `vpn-provisioner` group's ID on the host, so the containers can use the socket. |
 | `PROVISIONING_JOB_POLL_SECONDS` | `5` | How often the worker checks for new jobs. |
 

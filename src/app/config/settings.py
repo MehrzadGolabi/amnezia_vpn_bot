@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     # Development only: run this command with `serve` instead of using the socket,
     # for example against scripts/dev/sandbox.sh. Never set it in production.
     VPNCTL_DEV_COMMAND: str = ""
+    # Sent to vpnctl on other VPN hosts, which keep only its SHA-256 (CLIENT_TOKEN_SHA256).
+    VPNCTL_TOKEN: SecretStr = SecretStr("")
     PROVISIONING_JOB_POLL_SECONDS: int = 5
     EXPIRY_CHECK_INTERVAL_SECONDS: int = 300
     REMINDER_DAYS_BEFORE_EXPIRY: Union[List[int], str] = Field(default_factory=lambda: [7, 3, 1])

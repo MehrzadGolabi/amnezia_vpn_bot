@@ -7,6 +7,8 @@
 #                                               on this host's Tailscale address and
 #                                               answers only <bot IP>, the bot host's
 #                                               Tailscale address
+#   ... --token-sha256 <hex>                    SHA-256 of the bot's VPNCTL_TOKEN; vpnctl
+#                                               refuses TCP callers without that token
 #   ... --port <n>                              the Tailscale port (default 7391)
 #   ... --remove-ssh                            after the bot is updated: remove the old
 #                                               SSH and sudo setup (see docs/OPERATIONS.md)
@@ -15,11 +17,13 @@
 set -euo pipefail
 
 TAILNET_BOT_IP=""
+TOKEN_SHA256=""
 PORT=7391
 REMOVE_SSH=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --tailnet) TAILNET_BOT_IP="${2:?--tailnet needs the Tailscale IP of the bot host}"; shift 2 ;;
+        --token-sha256) TOKEN_SHA256="${2:?--token-sha256 needs the token hash}"; shift 2 ;;
         --port) PORT="${2:?--port needs a number}"; shift 2 ;;
         --remove-ssh) REMOVE_SSH=1; shift ;;
         *) echo "Unknown option: $1"; exit 2 ;;
@@ -60,6 +64,9 @@ command -v awg >/dev/null || echo "WARNING: awg not found. Install amneziawg-too
 if [ -n "$TAILNET_BOT_IP" ]; then
     python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' "$TAILNET_BOT_IP" 2>/dev/null \
         || { echo "--tailnet needs an IP address, got: $TAILNET_BOT_IP"; exit 2; }
+    if [ -n "$TOKEN_SHA256" ] && ! [[ "$TOKEN_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+        echo "--token-sha256 must be 64 hex characters (sha256sum of the token)"; exit 2
+    fi
     command -v tailscale >/dev/null || { echo "tailscale is required for --tailnet"; exit 1; }
     LISTEN_IP="$(tailscale ip -4 | head -n1)"
     [ -n "$LISTEN_IP" ] || { echo "This host has no Tailscale IPv4 address. Run 'tailscale up' first."; exit 1; }
@@ -107,6 +114,11 @@ if [ -z "$TAILNET_BOT_IP" ]; then
 else
     # 2b. The bot runs elsewhere and connects over Tailscale.
     set_conf ALLOWED_CLIENTS "$TAILNET_BOT_IP"
+    if [ -n "$TOKEN_SHA256" ]; then
+        set_conf CLIENT_TOKEN_SHA256 "$(printf '%s' "$TOKEN_SHA256" | tr 'A-F' 'a-f')"
+    elif ! grep -q '^CLIENT_TOKEN_SHA256=[0-9a-f]' /etc/amnezia/vpnctl.conf; then
+        echo "WARNING: no --token-sha256 given and none set, so vpnctl refuses the bot until you add one."
+    fi
     install_service vpnctl-tailnet
     sed -e "s|@LISTEN@|$LISTEN_IP:$PORT|" -e "s|@BOT_IP@|$TAILNET_BOT_IP|" \
         "$SRC_DIR/systemd/vpnctl-tailnet.socket.in" > "$UNITS/vpnctl-tailnet.socket"

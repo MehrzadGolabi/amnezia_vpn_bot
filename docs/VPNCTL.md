@@ -35,12 +35,12 @@ The bot sends one line of JSON per connection and reads one line back:
 {"exit_code": 3, "error": "No client config for x"}
 ```
 
-`command` is one of the six commands above, from `create-peer` to `get-config`, and `args` holds exactly their options, with `-` written as `_` (`subscription_id`, `label`, `peer_id`). Anything else, including `encode`, `decode` and `serve`, is refused with exit code 2. A request may be at most 4 KB and must arrive within 10 seconds.
+Over TCP the request also carries `"token"`. `command` is one of the six commands above, from `create-peer` to `get-config`, and `args` holds exactly their options, with `-` written as `_` (`subscription_id`, `label`, `peer_id`). Anything else, including `encode`, `decode` and `serve`, is refused with exit code 2. A request may be at most 4 KB and must arrive within 10 seconds.
 
 | Unit | Listens on | Who can connect |
 |---|---|---|
 | `vpnctl.socket` | `/run/vpnctl/vpnctl.sock` | root and the `vpn-provisioner` group: the bot on this host |
-| `vpnctl-tailnet.socket` | this host's Tailscale IP, port 7391 (`--tailnet`) | the addresses in `ALLOWED_CLIENTS`, which `vpnctl` checks itself |
+| `vpnctl-tailnet.socket` | this host's Tailscale IP, port 7391 (`--tailnet`) | the addresses in `ALLOWED_CLIENTS`, with the token in `CLIENT_TOKEN_SHA256`; `vpnctl` checks both itself |
 
 Each connection starts `vpnctl@.service` (or `vpnctl-tailnet@.service`). It keeps only `CAP_NET_ADMIN`, can write only `/etc/amnezia/amneziawg`, and can't open network connections. Its log is in `journalctl -u 'vpnctl@*'`.
 
@@ -71,6 +71,7 @@ This is the same layout `awg-add-client.sh` and `awg-del-client.sh` use, so the 
 | `PERSISTENT_KEEPALIVE` | `25` | |
 | `AWG_BIN` | `awg` | The `awg` binary from amneziawg-tools 3.1. |
 | `ALLOWED_CLIENTS` | | Comma-separated IPs that may connect over TCP: the bot host's Tailscale IP. Empty refuses everyone. Set by `install-provisioner.sh --tailnet`. |
+| `CLIENT_TOKEN_SHA256` | | SHA-256 (hex) of the bot's `VPNCTL_TOKEN`. TCP callers must send that token. Empty refuses everyone. Set by `--token-sha256`. |
 
 Keys, port, subnet and obfuscation values are read from `awg1.conf`, so they never need to be copied here.
 
@@ -97,4 +98,4 @@ PROVISIONER_MODE=vpnctl
 VPNCTL_DEV_COMMAND=env VPNCTL_CONFIG=/path/to/.sandbox/vpnctl.conf python3 /path/to/scripts/provisioner/vpnctl
 ```
 
-The test suite uses the same sandbox. It also runs `vpnctl serve` behind real Unix and TCP sockets, the way systemd does, to test the bot's connections and the `ALLOWED_CLIENTS` check.
+The test suite uses the same sandbox. It also runs `vpnctl serve` behind real Unix and TCP sockets, the way systemd does, to test the bot's connections and the `ALLOWED_CLIENTS` and token checks.

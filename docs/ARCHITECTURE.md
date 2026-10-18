@@ -52,15 +52,16 @@ Subscription: `provisioning` -> `active` -> `disabled` (expired, peer off) -> `e
 
 On the bot's own host, `vpnctl.socket` listens on `/run/vpnctl/vpnctl.sock`. Only root and the `vpn-provisioner` group can connect.
 
-On every other VPN host, `vpnctl-tailnet.socket` listens on that host's Tailscale address, port 7391. Three things have to agree before a request runs:
+On every other VPN host, `vpnctl-tailnet.socket` listens on that host's Tailscale address, port 7391. Every check below has to pass before a request runs:
 
 1. The Tailscale policy below lets only the bot host (`tag:bot`) reach that port.
 2. systemd's `IPAddressAllow` accepts connections only from the bot host's Tailscale IP.
-3. `vpnctl` itself refuses any caller not listed in `ALLOWED_CLIENTS` in `/etc/amnezia/vpnctl.conf`. This is the check that doesn't depend on anything else being set up right.
+3. `vpnctl` refuses any caller not listed in `ALLOWED_CLIENTS` in `/etc/amnezia/vpnctl.conf`.
+4. `vpnctl` refuses any request without the bot's token, `VPNCTL_TOKEN` in the bot's `.env`. The VPN host keeps only its SHA-256 (`CLIENT_TOKEN_SHA256`), so a broken-into VPN host can't use it against the others.
 
-A Tailscale address can't be faked: traffic from 100.x.y.z arrives through WireGuard, signed by that machine's key, and Tailscale drops packets claiming a 100.x address that come in any other way. That makes the address a real identity, so the bot needs no SSH key or password of its own. The connection is encrypted by WireGuard.
+A Tailscale address can't be faked: traffic from 100.x.y.z arrives through WireGuard, signed by that machine's key, and Tailscale drops packets claiming a 100.x address that come in any other way. The connection is encrypted by WireGuard. But the address names a machine, not a program: any user or service on the bot host has the same address. The token, which only root and the `vpn-provisioner` group can read, is what says the caller is the bot. Checks 3 and 4 are done by `vpnctl` itself, so they hold even if the Tailscale policy or systemd's filter is set up wrong.
 
-This is not automatically safer than SSH with a forced command. A root service listening on the network is a target of its own. What it removes is the bot's SSH key, a login account with sudo on every VPN host, and an unsandboxed `vpnctl`. What it adds is a small, sandboxed process per request, and a dependency on Tailscale being set up right, which is why `vpnctl` checks the caller itself.
+This is not automatically safer than SSH with a forced command. A root service listening on the network is a target of its own. What it removes is the bot's SSH key, a login account with sudo on every VPN host, and an unsandboxed `vpnctl`. What it adds is a small, sandboxed process per request, and a reliance on Tailscale for who may connect, which is why `vpnctl` checks the caller and the token itself.
 
 What a break-in can reach:
 

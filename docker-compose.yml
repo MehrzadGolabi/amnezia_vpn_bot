@@ -45,11 +45,10 @@ services:
     command: ["python", "-m", "src.app.bot.main"]
     env_file:
       - .env
-    # Reads data usage from vpnctl for the subscription screens.
-    volumes:
-      - /run/vpnctl:/run/vpnctl
-    group_add:
-      - "${VPNCTL_GID:-65534}"
+    # No vpnctl socket or token here: this container talks to Telegram, so it can't
+    # change VPN servers. Subscription screens show no data usage with Docker.
+    environment:
+      VPNCTL_TOKEN: ""
     deploy:
       resources:
         limits:
@@ -78,7 +77,7 @@ services:
     volumes:
       - /run/vpnctl:/run/vpnctl
     group_add:
-      - "${VPNCTL_GID:-65534}"
+      - "${VPNCTL_GID:-1000}"
     deploy:
       resources:
         limits:

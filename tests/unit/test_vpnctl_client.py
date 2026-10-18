@@ -1,5 +1,6 @@
 """The bot's vpnctl client, and `vpnctl serve` behind real Unix and TCP sockets."""
 import base64
+import hashlib
 import json
 import socket
 import subprocess
@@ -22,6 +23,8 @@ from src.app.utils.amnezia_codec import decode_vpn_url
 LOCAL = VPNServer(slug="de-1", display_name="Germany", country_code="DE", host="")
 REMOTE = VPNServer(slug="tr-1", display_name="Turkey", country_code="TR", host="127.0.0.2")
 CONFIG = "[Interface]\nPrivateKey = abc\n"
+TOKEN = "s3cret-token"
+TOKEN_SHA256 = hashlib.sha256(TOKEN.encode()).hexdigest()
 
 
 def reply(exit_code=0, result=None, error=None) -> bytes:
@@ -33,8 +36,8 @@ def reply(exit_code=0, result=None, error=None) -> bytes:
     return (json.dumps(body) + "\n").encode()
 
 
-def fake(response: bytes) -> VpnctlProvisioner:
-    prov = VpnctlProvisioner(socket_path="/nonexistent", dev_command="")
+def fake(response: bytes, token: str = "") -> VpnctlProvisioner:
+    prov = VpnctlProvisioner(socket_path="/nonexistent", dev_command="", token=token)
     prov._exchange = AsyncMock(return_value=response)
     return prov
 
@@ -139,26 +142,41 @@ async def test_unix_socket_lifecycle(awg_sandbox, vpnctl_unix_socket):
     assert awg_sandbox.live_peers() == {}
 
 
-async def test_tcp_caller_in_allowed_clients(awg_sandbox, remote_port):
-    awg_sandbox.allow_clients("100.64.0.1, 127.0.0.1")
-    prov = VpnctlProvisioner(dev_command="")
+async def test_token_goes_only_to_remote_hosts():
+    prov = fake(reply(result={"status": "success"}), token=TOKEN)
+    await prov.disable_peer(server=LOCAL, peer_external_id="p")
+    assert "token" not in sent(prov)
+    await prov.disable_peer(server=REMOTE, peer_external_id="p")
+    assert sent(prov)["token"] == TOKEN
+
+
+async def test_tcp_caller_with_address_and_token(awg_sandbox, remote_port):
+    awg_sandbox.allow_clients("100.64.0.1, 127.0.0.1", TOKEN_SHA256)
+    prov = VpnctlProvisioner(dev_command="", token=TOKEN)
     peer = await prov.create_peer(server=REMOTE, subscription_id=uuid.uuid4(), telegram_user_id=7)
     assert peer.external_id.endswith("_tr-1")
     assert len(awg_sandbox.live_peers()) == 1
 
 
-@pytest.mark.parametrize("allowed", ["", "100.64.0.1", "not-an-ip"])
-async def test_tcp_caller_not_in_allowed_clients_is_refused(awg_sandbox, remote_port, allowed):
-    if allowed:
-        awg_sandbox.allow_clients(allowed)
-    prov = VpnctlProvisioner(dev_command="")
-    with pytest.raises(PermanentProvisioningError, match="ALLOWED_CLIENTS"):
+@pytest.mark.parametrize("allowed,token_sha256,token,message", [
+    ("", TOKEN_SHA256, TOKEN, "ALLOWED_CLIENTS"),
+    ("100.64.0.1", TOKEN_SHA256, TOKEN, "ALLOWED_CLIENTS"),
+    ("not-an-ip", TOKEN_SHA256, TOKEN, "ALLOWED_CLIENTS"),
+    # The right machine, but not the bot: any user on the bot host shares its address.
+    ("127.0.0.1", TOKEN_SHA256, "", "Wrong or missing token"),
+    ("127.0.0.1", TOKEN_SHA256, "guess", "Wrong or missing token"),
+    ("127.0.0.1", "", TOKEN, "CLIENT_TOKEN_SHA256 is not set"),
+])
+async def test_tcp_caller_is_refused(awg_sandbox, remote_port, allowed, token_sha256, token, message):
+    awg_sandbox.allow_clients(allowed, token_sha256)
+    prov = VpnctlProvisioner(dev_command="", token=token)
+    with pytest.raises(PermanentProvisioningError, match=message):
         await prov.create_peer(server=REMOTE, subscription_id=uuid.uuid4(), telegram_user_id=7)
     assert awg_sandbox.live_peers() == {}
 
 
-def raw_request(port: int, data: bytes) -> dict:
-    with socket.create_connection(("127.0.0.2", port), timeout=15) as s:
+def raw_request(connect, data: bytes) -> dict:
+    with connect() as s:
         s.sendall(data)
         s.shutdown(socket.SHUT_WR)
         out = b""
@@ -167,20 +185,36 @@ def raw_request(port: int, data: bytes) -> dict:
     return json.loads(out)
 
 
+def unix(path):
+    def connect():
+        s = socket.socket(socket.AF_UNIX)
+        s.settimeout(15)
+        s.connect(path)
+        return s
+    return connect
+
+
 @pytest.mark.parametrize("data,message", [
     (b'{"command": "encode", "args": {}}\n', "Unknown command"),
     (b'{"command": "serve", "args": {}}\n', "Unknown command"),
     (b'{"command": "get-config", "args": {"peer_id": "a", "input": "/etc/shadow"}}\n', "takes exactly"),
     (b'{"command": "get-config", "args": {"peer_id": ["a"]}}\n', "takes exactly"),
     (b'{"command": "get-config", "args": {"peer_id": "../../x"}}\n', "Invalid peer_id"),
+    (b'{"command": "get-config", "args": {"peer_id": "a"}, "debug": true}\n', "may only have"),
     (b"x" * 4097, "too large"),
     (b"[1, 2]\n", "must be an object"),
 ])
-def test_serve_rejects_bad_requests(awg_sandbox, vpnctl_tcp_port, data, message):
-    awg_sandbox.allow_clients("127.0.0.1")
-    response = raw_request(vpnctl_tcp_port, data)
+def test_serve_rejects_bad_requests(vpnctl_unix_socket, data, message):
+    response = raw_request(unix(vpnctl_unix_socket), data)
     assert response["exit_code"] == 2
     assert message in response["error"]
+
+
+def test_unauthenticated_tcp_caller_learns_nothing(awg_sandbox, vpnctl_tcp_port):
+    awg_sandbox.allow_clients("127.0.0.1", TOKEN_SHA256)
+    response = raw_request(lambda: socket.create_connection(("127.0.0.2", vpnctl_tcp_port), timeout=15),
+                           b'{"command": "get-config", "args": {"peer_id": "../../x"}}\n')
+    assert response == {"exit_code": 4, "error": "Wrong or missing token"}
 
 
 def test_encode_reads_stdin_only(awg_sandbox):

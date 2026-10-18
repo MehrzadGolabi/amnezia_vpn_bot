@@ -18,11 +18,13 @@ sudo nano /etc/amnezia/vpnctl.conf        # set ENDPOINT_HOST
 getent group vpn-provisioner | cut -d: -f3   # put this in VPNCTL_GID in .env
 ```
 
-On every other VPN host, as in [More servers](NATIVE_SETUP.md#more-servers), with the Docker host's Tailscale IP. Containers reach the tailnet through the Docker host, so `vpnctl` sees the Docker host's address:
+On every other VPN host, as in [More servers](NATIVE_SETUP.md#more-servers), with the Docker host's Tailscale IP and the hash of a new `VPNCTL_TOKEN` for `.env`. Containers reach the tailnet through the Docker host, so `vpnctl` sees the Docker host's address:
 
 ```bash
-sudo ./scripts/provisioner/install-provisioner.sh --tailnet <Docker host tailscale IP>
+sudo ./scripts/provisioner/install-provisioner.sh --tailnet <Docker host tailscale IP> --token-sha256 <hash>
 ```
+
+Only the worker container gets the socket and the token. The `bot` container, which talks to Telegram, gets neither, so its subscription screens show no data usage.
 
 The installer only runs from a folder that root owns, because it installs these files as root.
 
@@ -32,7 +34,7 @@ The installer only runs from a folder that root owns, because it installs these 
 cp .env.example .env
 ```
 
-Set the Telegram settings, the Postgres password (in both `POSTGRES_PASSWORD` and `DATABASE_URL`), `PROVISIONER_MODE=vpnctl`, and `VPNCTL_GID` from step 1. Then set up one server group per VPN host. Leave `HOST` out for the Docker host itself, and use the Tailscale IP for the others:
+Set the Telegram settings, the Postgres password (in both `POSTGRES_PASSWORD` and `DATABASE_URL`), `PROVISIONER_MODE=vpnctl`, `VPNCTL_GID` from step 1, and `VPNCTL_TOKEN` if there are other VPN hosts. Then set up one server group per VPN host. Leave `HOST` out for the Docker host itself, and use the Tailscale IP for the others:
 
 ```ini
 VPN_SERVER_DE_1_SLUG=de-1

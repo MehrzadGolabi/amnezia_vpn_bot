@@ -58,12 +58,13 @@ class VpnctlProvisioner(VPNProvisioner):
     response, answered by `vpnctl serve`:
 
     - on this host, over the Unix socket systemd keeps at /run/vpnctl/vpnctl.sock;
-    - on another VPN host, over TCP to its Tailscale address (VPN_SERVER_<NAME>_HOST);
+    - on another VPN host, over TCP to its Tailscale address (VPN_SERVER_<NAME>_HOST),
+      with VPNCTL_TOKEN, because the address alone proves only which machine is calling;
     - in development, by running `dev_command` (for example against scripts/dev/sandbox.sh)
       with the request on stdin.
 
-    No SSH and no sudo: the socket's permissions and vpnctl's ALLOWED_CLIENTS decide
-    who may ask, and systemd runs vpnctl as root in a sandbox.
+    No SSH and no sudo: the socket's permissions, or vpnctl's ALLOWED_CLIENTS and token,
+    decide who may ask, and systemd runs vpnctl as root in a sandbox.
     """
 
     def __init__(
@@ -71,9 +72,14 @@ class VpnctlProvisioner(VPNProvisioner):
         *,
         socket_path: Optional[str] = None,
         dev_command: Optional[str] = None,
+        token: Optional[str] = None,
         timeout: float = 30,
     ):
         settings = get_settings()
+        if token is None:
+            secret = getattr(settings, "VPNCTL_TOKEN", None)
+            token = secret.get_secret_value() if secret is not None else ""
+        self.token = token
         self.socket_path = socket_path or getattr(settings, "VPNCTL_SOCKET", None) or DEFAULT_SOCKET_PATH
         command = dev_command if dev_command is not None else getattr(settings, "VPNCTL_DEV_COMMAND", "")
         self.dev_command: List[str] = shlex.split(command) if command else []
@@ -128,7 +134,10 @@ class VpnctlProvisioner(VPNProvisioner):
 
     async def _call(self, server: VPNServer, command: str, **args: str) -> Tuple[int, dict, str]:
         """Returns (exit_code, result, error) from vpnctl on the server."""
-        request = (json.dumps({"command": command, "args": args}) + "\n").encode("utf-8")
+        body = {"command": command, "args": args}
+        if not is_local_host(server.host) and self.token:
+            body["token"] = self.token  # only over TCP; the local socket checks permissions
+        request = (json.dumps(body) + "\n").encode("utf-8")
         try:
             raw = await asyncio.wait_for(self._exchange(server, request), timeout=self.timeout)
         except asyncio.TimeoutError as e:
