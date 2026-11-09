@@ -644,6 +644,8 @@ async def cmd_admin_user_configs(message: Message, data: Dict[str, Any]):
     )
     if len(subs) > MAX_CONFIGS_SENT:
         text += f"\n\nOnly the newest {MAX_CONFIGS_SENT} are shown."
+    if len(text) > 4000:  # Telegram's limit is 4096; cut on a line break so no HTML tag is split
+        text = text[:text.rfind("\n", 0, 3950)] + "\n…"
     try:
         await message.bot.send_message(chat_id=admin_chat, text=text, parse_mode="HTML")
         delivered = True

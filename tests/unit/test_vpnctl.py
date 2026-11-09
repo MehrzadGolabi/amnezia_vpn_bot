@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import re
+import socket
 import stat
 import subprocess
 import sys
@@ -231,3 +232,34 @@ def test_status_of_unknown_peer_reports_an_interface_that_is_not_running(awg_san
     res = awg_sandbox.vpnctl("peer-status", "--peer-id", "vpnctl-check", env={"FAKE_AWG_DOWN": "nomodule"})
     assert res.returncode == 1
     assert "interface awg1 is not running" in res.stderr
+
+
+def _load_vpnctl():
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader("vpnctl_script", str(VPNCTL))
+    spec = importlib.util.spec_from_loader("vpnctl_script", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def test_interface_down_message_tells_stopped_from_unreachable(tmp_path, monkeypatch):
+    vpnctl = _load_vpnctl()
+    monkeypatch.setattr(vpnctl, "USERSPACE_SOCKET_DIRS", (str(tmp_path),))
+
+    # No socket and no such link: the interface isn't running.
+    msg = vpnctl.interface_down_message("awgtest0", "awg set", "Protocol not supported")
+    assert msg.startswith("AmneziaWG interface awgtest0 is not running")
+    assert "systemctl restart awg-quick@awgtest0" in msg
+
+    # The link and amneziawg-go's socket are both there (lo stands in for the link):
+    # it's running, and something keeps awg in vpnctl's sandbox from reaching it.
+    sock = socket.socket(socket.AF_UNIX)
+    sock.bind(str(tmp_path / "lo.sock"))
+    try:
+        msg = vpnctl.interface_down_message("lo", "awg set", "Protocol not supported")
+    finally:
+        sock.close()
+    assert msg.startswith("AmneziaWG interface lo is running but awg could not reach it")
+    assert "ReadWritePaths" in msg and "systemctl restart" not in msg

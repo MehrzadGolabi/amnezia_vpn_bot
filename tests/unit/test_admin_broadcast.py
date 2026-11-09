@@ -160,3 +160,38 @@ async def test_configs_ignores_non_admins(session, admin):
     await cmd_admin_user_configs(msg, {"session": session})
     msg.answer.assert_not_called()
     msg.bot.send_document.assert_not_called()
+
+
+async def test_configs_summary_stays_under_telegram_limit(session, admin):
+    for n in range(20):
+        await _subscription(session, 43, slug=f"s-{n}", label=f"user_43_{n:02d}")
+    await session.commit()
+    provisioner = MagicMock()
+    provisioner.get_peer_config = AsyncMock(side_effect=RuntimeError("x" * 300))
+    msg = _message("/configs 43")
+    await cmd_admin_user_configs(msg, {"session": session, "provisioner": provisioner})
+    summary = msg.bot.send_message.await_args.kwargs["text"]
+    assert len(summary) <= 4096 and summary.endswith("…")
+
+
+async def test_uncopyable_broadcast_message_resets_the_flow(session, admin):
+    from aiogram.exceptions import TelegramBadRequest
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+    from src.app.bot.handlers.admin_broadcast import handle_broadcast_message
+    from src.app.bot.states.admin_states import AdminBroadcastStates
+
+    await UserRepository(session).upsert_user(telegram_user_id=50)
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=ADMIN_ID, user_id=ADMIN_ID))
+    await state.set_state(AdminBroadcastStates.waiting_for_message)
+    await state.update_data(audience="all")
+
+    msg = _message("poll")
+    msg.message_id = 7
+    msg.bot.copy_message = AsyncMock(side_effect=TelegramBadRequest(
+        method=CopyMessage(chat_id=ADMIN_ID, from_chat_id=ADMIN_ID, message_id=7),
+        message="Bad Request: message can't be copied"))
+    await handle_broadcast_message(msg, {"session": session}, state)
+    assert await state.get_state() is None
+    assert "can't be broadcast" in msg.answer.await_args.args[0]

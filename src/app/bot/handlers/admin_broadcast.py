@@ -111,11 +111,17 @@ async def handle_broadcast_message(message: Message, data: Dict[str, Any], state
         await message.answer(f"There are no {AUDIENCE_NAMES[audience]} to send to.")
         return
 
+    # The preview is the same copy each user will get.
+    try:
+        await message.bot.copy_message(chat_id=message.chat.id, from_chat_id=message.chat.id,
+                                       message_id=message.message_id)
+    except TelegramAPIError as e:
+        await state.clear()
+        await message.answer(f"Telegram can't copy this kind of message, so it can't be broadcast ({e}). "
+                             "Start again with /broadcast.")
+        return
     await state.set_state(AdminBroadcastStates.confirming)
     await state.update_data(from_chat_id=message.chat.id, message_id=message.message_id)
-    # The preview is the same copy each user will get.
-    await message.bot.copy_message(chat_id=message.chat.id, from_chat_id=message.chat.id,
-                                   message_id=message.message_id)
     await message.answer(
         f"☝️ This is what <b>{count}</b> {AUDIENCE_NAMES[audience]} will get. Send it?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[

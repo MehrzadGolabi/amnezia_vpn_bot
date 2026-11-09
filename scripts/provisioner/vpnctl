@@ -80,15 +80,24 @@ USERSPACE_SOCKET_DIRS = ("/run/amneziawg", "/run/wireguard")
 
 
 def interface_down_message(iface: str, what: str, err: str) -> str:
-    """Explain an awg failure that means the interface isn't up, with what this host has."""
+    """Explain an awg failure that means the interface can't be reached, with what this
+    host has. The checks run inside vpnctl's sandbox, so they also tell a stopped
+    interface from one that is running but hidden from vpnctl."""
     sockets = [os.path.join(d, f"{iface}.sock") for d in USERSPACE_SOCKET_DIRS]
     found_socket = next((s for s in sockets if os.path.exists(s)), None)
+    has_link = os.path.exists(f"/sys/class/net/{iface}")
     facts = [
-        f"interface {iface} " + ("exists" if os.path.exists(f"/sys/class/net/{iface}") else "does not exist"),
+        f"interface {iface} " + ("exists" if has_link else "does not exist"),
         f"amneziawg-go socket {found_socket}" if found_socket else f"no amneziawg-go socket at {sockets[0]}",
         "amneziawg kernel module " + ("loaded" if os.path.isdir("/sys/module/amneziawg") else "not loaded"),
     ]
-    # The first line is what the admin alert shows, so it names the problem and the fix.
+    # The first sentence is what the admin alert shows, so it names the problem and the fix.
+    if has_link and found_socket:
+        return (
+            f"AmneziaWG interface {iface} is running but awg could not reach it from vpnctl ({what}: {err}). "
+            f"Check `journalctl -u 'vpnctl*@*'` and ReadWritePaths in vpnctl@.service, "
+            f"then /retry. Found: {'; '.join(facts)}."
+        )
     return (
         f"AmneziaWG interface {iface} is not running on this VPN host ({what}: {err}). "
         f"Start it with `systemctl restart awg-quick@{iface}` and check INTERFACE in vpnctl.conf, "
