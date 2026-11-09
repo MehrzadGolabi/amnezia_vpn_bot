@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, Tuple
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import BufferedInputFile, CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.bot.locales.strings import get_text
@@ -25,6 +25,7 @@ from src.app.db.repositories.server_repo import ServerRepository
 from src.app.db.repositories.subscription_repo import SubscriptionRepository
 from src.app.db.repositories.ticket_repo import TicketRepository
 from src.app.db.repositories.user_repo import UserRepository
+from src.app.utils.amnezia_codec import encode_vpn_url
 from src.app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -86,6 +87,8 @@ async def _dashboard(session: AsyncSession) -> Tuple[str, InlineKeyboardMarkup]:
         f"• <code>/servers</code> - View/Toggle Server Capacity\n"
         f"• <code>/products</code> - View Products Catalogue\n"
         f"• <code>/user &lt;telegram_id&gt;</code> - Lookup User Details\n"
+        f"• <code>/configs &lt;telegram_id&gt;</code> - Get All Of A User's Configs\n"
+        f"• <code>/broadcast</code> - Message Active, Inactive Or All Users\n"
         f"• <code>/block &lt;telegram_id&gt;</code> - Suspend User\n"
         f"• <code>/unblock &lt;telegram_id&gt;</code> - Unsuspend User\n"
         f"• <code>/retry</code> - Retry Jobs That Failed For Good\n"
@@ -552,9 +555,107 @@ async def cmd_admin_user_lookup(message: Message, data: Dict[str, Any]):
         if usage:
             text += "\n" + usage
     if subs:
-        text += "\n\nAdd time with <code>/extend &lt;config name&gt; &lt;days&gt;</code>."
+        text += (
+            "\n\nAdd time with <code>/extend &lt;config name&gt; &lt;days&gt;</code>. "
+            f"Get the config files with <code>/configs {user.telegram_user_id}</code>."
+        )
 
     await message.answer(text, parse_mode="HTML")
+
+
+MAX_CONFIGS_SENT = 20
+
+
+@admin_router.message(Command("configs"))
+async def cmd_admin_user_configs(message: Message, data: Dict[str, Any]):
+    """Send an admin every config a customer has, fetched from the VPN servers.
+
+    The files hold the clients' private keys, so they go to the admin's private chat
+    even when the command is used in a group such as the receipts chat.
+    """
+    if not message.from_user or not is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Usage: <code>/configs &lt;telegram_user_id&gt;</code>", parse_mode="HTML")
+        return
+
+    target_tg_id = int(parts[1])
+    session: AsyncSession = data.get("session")
+    user = await UserRepository(session).get_by_telegram_id(target_tg_id)
+    if not user:
+        await message.answer(f"User with Telegram ID <code>{target_tg_id}</code> not found.", parse_mode="HTML")
+        return
+    subs = await SubscriptionRepository(session).get_all_by_user_id(user.id)
+    if not subs:
+        await message.answer(f"<code>{target_tg_id}</code> has no subscriptions.", parse_mode="HTML")
+        return
+
+    admin_chat = message.from_user.id
+    provisioner = data.get("provisioner")
+    server_repo = ServerRepository(session)
+    sent, lines = 0, []
+    for sub in subs[:MAX_CONFIGS_SENT]:
+        server = await server_repo.get_by_id(sub.vpn_server_id)
+        name = html.escape(sub.peer_label or str(sub.id))
+        summary = (
+            f"<code>{name}</code> · {html.escape(server.display_name) if server else '?'} · {sub.status.value} · "
+            f"expires {sub.expires_at.strftime('%Y-%m-%d')}"
+        )
+        if not sub.peer_external_id or sub.removed_at is not None or server is None:
+            lines.append(f"• {summary}\n  <i>no config on a server</i>")
+            continue
+        if provisioner is None:
+            lines.append(f"• {summary}\n  <i>provisioner not available</i>")
+            continue
+        try:
+            config = await provisioner.get_peer_config(server=server, peer_external_id=sub.peer_external_id)
+        except Exception as e:
+            lines.append(f"• {summary}\n  <i>could not fetch: {html.escape(str(e)[:150])}</i>")
+            continue
+        conf_text = config.decode("utf-8", errors="ignore")
+        try:
+            await message.bot.send_document(
+                chat_id=admin_chat,
+                document=BufferedInputFile(config, filename=f"{sub.peer_label or 'amneziawg'}.conf"),
+                caption=summary,
+                parse_mode="HTML",
+            )
+            if conf_text:
+                await message.bot.send_message(
+                    chat_id=admin_chat, text=get_text("vpn_key", "en", vpn_url=encode_vpn_url(conf_text)),
+                    parse_mode="HTML",
+                )
+        except Exception as e:
+            logger.error("admin_config_send_failed", admin=admin_chat, error=str(e))
+            lines.append(f"• {summary}\n  <i>could not send it to you: {html.escape(str(e)[:150])}</i>")
+            continue
+        sent += 1
+        lines.append(f"• {summary}\n  sent")
+
+    await _audit(session, message.from_user.id, "user.configs_viewed", "user", user.id,
+                 telegram_user_id=target_tg_id, configs_sent=sent)
+    await session.commit()
+
+    text = (
+        f"🗂 <b>Configs of</b> <code>{target_tg_id}</code> (@{html.escape(user.username or 'N/A')}): "
+        f"{sent} sent of {len(subs)}\n\n" + "\n".join(lines)
+    )
+    if len(subs) > MAX_CONFIGS_SENT:
+        text += f"\n\nOnly the newest {MAX_CONFIGS_SENT} are shown."
+    try:
+        await message.bot.send_message(chat_id=admin_chat, text=text, parse_mode="HTML")
+        delivered = True
+    except Exception as e:
+        logger.error("admin_config_summary_failed", admin=admin_chat, error=str(e))
+        delivered = False
+    if message.chat.id != admin_chat:
+        await message.answer(
+            "🔐 Configs hold private keys, so I sent them to you in a private chat." if delivered else
+            "🔐 Configs hold private keys and go to your private chat, but I can't message you there. "
+            "Open the bot in a private chat, press Start, and run the command again."
+        )
 
 
 @admin_router.message(Command("extend"))

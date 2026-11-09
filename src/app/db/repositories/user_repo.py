@@ -1,9 +1,19 @@
 import uuid
+from enum import Enum
 from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.db.models.base import utc_now
+from src.app.db.models.subscription import Subscription, SubscriptionStatus
 from src.app.db.models.user import User
+
+
+class Audience(str, Enum):
+    """Who a broadcast goes to. Blocked users are never included."""
+    ACTIVE = "active"      # at least one subscription that is active and not yet expired
+    INACTIVE = "inactive"  # everyone else, including users who never bought anything
+    ALL = "all"
 
 
 class UserRepository:
@@ -55,3 +65,17 @@ class UserRepository:
             await self.session.flush()
             return True
         return False
+
+    async def list_audience_telegram_ids(self, audience: Audience) -> List[int]:
+        """Telegram IDs of the users in a broadcast audience, oldest account first."""
+        active_user_ids = select(Subscription.user_id).where(
+            Subscription.status == SubscriptionStatus.ACTIVE,
+            Subscription.expires_at > utc_now(),
+        )
+        stmt = select(User.telegram_user_id).where(User.is_blocked.is_(False))
+        if audience == Audience.ACTIVE:
+            stmt = stmt.where(User.id.in_(active_user_ids))
+        elif audience == Audience.INACTIVE:
+            stmt = stmt.where(User.id.not_in(active_user_ids))
+        res = await self.session.execute(stmt.order_by(User.created_at.asc()))
+        return list(res.scalars().all())

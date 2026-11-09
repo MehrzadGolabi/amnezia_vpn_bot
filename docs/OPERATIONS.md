@@ -10,6 +10,8 @@ Send these to the bot from an account listed in `ADMIN_TELEGRAM_IDS`.
 | `/servers` | Shows each server's state and active subscriptions, and pauses or resumes a server for new orders. |
 | `/products` | Lists the plans. |
 | `/user <telegram_id>` | Shows a customer and their subscriptions, with data used and last connection. |
+| `/configs <telegram_id>` | Fetches every config the customer has from the VPN servers and sends you the `.conf` files and `vpn://` keys. They hold the clients' private keys, so they always go to your private chat, even when you use the command in a group. Subscriptions without a peer on a server are listed but not sent. The lookup is recorded in `/audit`. |
+| `/broadcast` | Sends one message to active users, inactive users, or everyone. Active means at least one subscription that is active and hasn't expired. Inactive is everyone else, including people who never bought. Blocked users are left out. You pick the audience, send the message (text, photo, file, anything), check the preview, and confirm. It is copied to each user in the background, about 20 a second, and you get a count of delivered and failed. Users who blocked the bot count as failed. |
 | `/extend <config name> <days>` | Adds days to a subscription and turns it back on if it had expired. A negative number takes days off. |
 | `/block <telegram_id>`, `/unblock <telegram_id>` | Suspends or restores a customer. |
 | `/retry` | Lists jobs that failed for good, with their last error, and queues one or all of them again. |
