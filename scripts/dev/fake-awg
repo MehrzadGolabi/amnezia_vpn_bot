@@ -44,8 +44,13 @@ def main(argv):
     elif cmd == "set":
         iface, rest = argv[1], argv[2:]
         state = load()
-        if os.environ.get("FAKE_AWG_DOWN") == "1":
+        down = os.environ.get("FAKE_AWG_DOWN")
+        if down == "1":
             sys.exit(f"Unable to modify interface: No such device ({iface})")
+        if down == "nomodule":
+            # No amneziawg-go socket and no kernel module: what awg says on a host
+            # where awg-quick@<iface> isn't running.
+            sys.exit("Unable to modify interface: Protocol not supported")
         peers = state.setdefault(iface, {})
         if rest[:1] != ["peer"]:
             sys.exit("fake-awg only supports 'set <if> peer ...'")
@@ -65,6 +70,8 @@ def main(argv):
         save(state)
     elif cmd == "show":
         iface, field = argv[1], argv[2]
+        if os.environ.get("FAKE_AWG_DOWN") == "nomodule":
+            sys.exit("Unable to access interface: Protocol not supported")
         peers = load().get(iface, {})
         for pub, p in peers.items():
             if field == "latest-handshakes":

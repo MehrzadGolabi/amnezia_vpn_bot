@@ -6,11 +6,13 @@ from decimal import Decimal
 import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
+from aiogram.methods import AnswerCallbackQuery, CopyMessage, EditMessageText, SendMessage
 from aiogram.types import CallbackQuery, Chat, Message, Update, User as TelegramUser
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from src.app.bot.handlers import admin_jobs_router, admin_router, customer_router, fallback_router, support_router
+from src.app.bot.handlers import (
+    admin_broadcast_router, admin_jobs_router, admin_router, customer_router, fallback_router, support_router,
+)
 from src.app.bot.middleware.user_middleware import UserMiddleware
 from src.app.config.settings import get_settings
 from src.app.db.models.base import Base
@@ -55,6 +57,7 @@ def dispatcher():
     dp.include_router(support_router)
     dp.include_router(admin_router)
     dp.include_router(admin_jobs_router)  # same order as src/app/bot/main.py
+    dp.include_router(admin_broadcast_router)
     dp.include_router(fallback_router)
     return dp
 
@@ -230,3 +233,37 @@ async def test_retry_and_audit_reach_their_handlers(env):
     session.calls.clear()
     await send(dp, bot, ADMIN_ID, "/audit")
     assert any(isinstance(c, SendMessage) and "job.requeued" in c.text for c in session.calls)
+
+
+async def test_broadcast_to_active_users_end_to_end(env, monkeypatch):
+    from src.app.bot.handlers import admin_broadcast
+    monkeypatch.setattr(admin_broadcast, "SEND_INTERVAL_SECONDS", 0)
+    dp, bot, session, factory = env
+    await _active_subscription(factory, CUSTOMER_ID + 5)
+    async with factory() as s:
+        await UserRepository(s).upsert_user(telegram_user_id=CUSTOMER_ID + 6)  # never bought
+        await s.commit()
+
+    await send(dp, bot, ADMIN_ID, "/broadcast")
+    assert any(isinstance(c, SendMessage) and "Broadcast" in c.text for c in session.calls)
+
+    await press(dp, bot, ADMIN_ID, "adm_bc_aud_active")
+    session.calls.clear()
+    await send(dp, bot, ADMIN_ID, "Server maintenance tonight")
+    # The admin is shown a preview copy, then asked to confirm.
+    assert [c.chat_id for c in session.calls if isinstance(c, CopyMessage)] == [ADMIN_ID]
+    assert any(isinstance(c, SendMessage) and "Send it?" in c.text for c in session.calls)
+
+    session.calls.clear()
+    await press(dp, bot, ADMIN_ID, "adm_bc_send")
+    for task in list(admin_broadcast.running_broadcasts):
+        await task
+    copies = [c.chat_id for c in session.calls if isinstance(c, CopyMessage)]
+    assert copies == [CUSTOMER_ID + 5]
+    assert any(isinstance(c, SendMessage) and c.chat_id == ADMIN_ID and "1 delivered" in c.text
+               for c in session.calls)
+
+    # A second tap on the same button doesn't send it again.
+    session.calls.clear()
+    await press(dp, bot, ADMIN_ID, "adm_bc_send")
+    assert not any(isinstance(c, CopyMessage) for c in session.calls)
