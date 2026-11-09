@@ -209,3 +209,25 @@ def test_enable_refuses_an_address_taken_while_disabled(awg_sandbox):
     assert res.returncode == 1
     assert "10.66.66.2 is now used by another peer" in res.stderr
     assert "# old" not in awg_sandbox.server_conf.read_text()
+
+
+def test_create_explains_an_interface_that_is_not_running(awg_sandbox):
+    # awg's own message when neither amneziawg-go nor the kernel module has the interface.
+    before = awg_sandbox.server_conf.read_text()
+    res = awg_sandbox.vpnctl("create-peer", "--subscription-id", str(uuid.uuid4()), "--label", "nomod",
+                             env={"FAKE_AWG_DOWN": "nomodule"})
+    assert res.returncode == 1  # retryable: /retry works once the host is fixed
+    first_line = res.stderr.splitlines()[0]
+    assert "interface awg1 is not running" in first_line
+    assert "systemctl restart awg-quick@awg1" in first_line
+    assert "Protocol not supported" in first_line
+    assert "no amneziawg-go socket at /run/amneziawg/awg1.sock" in first_line
+    assert awg_sandbox.server_conf.read_text() == before
+    assert list(awg_sandbox.clients.iterdir()) == []
+
+
+def test_status_of_unknown_peer_reports_an_interface_that_is_not_running(awg_sandbox):
+    # vpnctl-check asks about a client that doesn't exist; it must still notice awg1 is down.
+    res = awg_sandbox.vpnctl("peer-status", "--peer-id", "vpnctl-check", env={"FAKE_AWG_DOWN": "nomodule"})
+    assert res.returncode == 1
+    assert "interface awg1 is not running" in res.stderr

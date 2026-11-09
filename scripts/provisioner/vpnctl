@@ -71,6 +71,29 @@ OBFUSCATION_LINE = re.compile(
 )
 SECTION_HEADER = re.compile(r"^\s*\[[A-Za-z]+\]\s*$")
 ACTIVE_HANDSHAKE_SECONDS = 180
+# What awg prints when the interface isn't running. awg first looks for amneziawg-go's
+# control socket and, failing that, asks the amneziawg kernel module over netlink; with
+# neither present the netlink lookup fails as "Protocol not supported". "No such device"
+# is the kernel module loaded but no such interface.
+INTERFACE_DOWN_ERRORS = ("Protocol not supported", "No such device")
+USERSPACE_SOCKET_DIRS = ("/run/amneziawg", "/run/wireguard")
+
+
+def interface_down_message(iface: str, what: str, err: str) -> str:
+    """Explain an awg failure that means the interface isn't up, with what this host has."""
+    sockets = [os.path.join(d, f"{iface}.sock") for d in USERSPACE_SOCKET_DIRS]
+    found_socket = next((s for s in sockets if os.path.exists(s)), None)
+    facts = [
+        f"interface {iface} " + ("exists" if os.path.exists(f"/sys/class/net/{iface}") else "does not exist"),
+        f"amneziawg-go socket {found_socket}" if found_socket else f"no amneziawg-go socket at {sockets[0]}",
+        "amneziawg kernel module " + ("loaded" if os.path.isdir("/sys/module/amneziawg") else "not loaded"),
+    ]
+    # The first line is what the admin alert shows, so it names the problem and the fix.
+    return (
+        f"AmneziaWG interface {iface} is not running on this VPN host ({what}: {err}). "
+        f"Start it with `systemctl restart awg-quick@{iface}` and check INTERFACE in vpnctl.conf, "
+        f"then /retry. Found: {'; '.join(facts)}."
+    )
 
 
 class VpnctlError(Exception):
@@ -154,7 +177,10 @@ class Server:
     def awg_run(self, *args: str, input_text: str = None) -> str:
         res = subprocess.run([*self.awg, *args], input=input_text, capture_output=True, text=True)
         if res.returncode != 0:
-            raise VpnctlError(f"awg {' '.join(args[:2])} failed: {res.stderr.strip() or res.stdout.strip()}")
+            err = res.stderr.strip() or res.stdout.strip()
+            if any(marker in err for marker in INTERFACE_DOWN_ERRORS):
+                raise VpnctlError(interface_down_message(self.iface, f"awg {' '.join(args[:2])}", err))
+            raise VpnctlError(f"awg {' '.join(args[:2])} failed: {err}")
         return res.stdout.strip()
 
     def awg_set_peer(self, pub: str, psk: str, allowed_ips: str) -> None:
@@ -453,7 +479,12 @@ def cmd_peer_status(args, srv: Server) -> dict:
         pub = get_value(saved.splitlines(), "PublicKey") if saved else None
     result = {"status": "success", "peer_id": name, "exists": pub is not None, "enabled": enabled,
               "is_active": False, "last_handshake": None, "bytes_received": 0, "bytes_sent": 0}
-    if pub is None or not enabled:
+    if pub is None:
+        # Still touch the interface, so vpnctl-check (which asks about a client that
+        # doesn't exist) reports an interface that isn't running.
+        srv.awg_run("show", srv.iface, "peers")
+        return result
+    if not enabled:
         return result
 
     handshakes = _awg_show_table(srv, "latest-handshakes")
